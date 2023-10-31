@@ -21,7 +21,7 @@ python train.py \
     --output_dir result/supervise-simcse-phobert-base-v2 \
     --do_mlm True \
     --num_train_epochs 5 \
-    --per_device_train_batch_size 1 \
+    --per_device_train_batch_size 8 \
     --learning_rate 5e-5 \
     --max_seq_length 256 \
     --evaluation_strategy steps \

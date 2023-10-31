@@ -99,7 +99,7 @@ class SimCSE(object):
                     return_tensors="pt"
                 )
                 inputs = {k: v.to(target_device) for k, v in inputs.items()}
-                outputs = self.model(**inputs, return_dict=True)
+                outputs = self.model(**inputs, return_dict=True, sent_emb=True)
                 if self.pooler == "cls":
                     embeddings = outputs.pooler_output
                 elif self.pooler == "cls_before_pooler":
