@@ -124,7 +124,7 @@ class CLTrainer(Trainer):
             
             logger.info("Converting text chunk into law_id and article_id...")
             predicted_relevant_articles = []
-            for sample in tqdm(search_results):
+            for sample in tqdm(search_results, position=0, leave=True):
                 predicted_relevant_articles_for_sample = []
                 for article in sample:
                     predicted_relevant_articles_for_sample.append(search_index(corpus_256, article[0]))
