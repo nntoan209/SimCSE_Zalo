@@ -98,9 +98,12 @@ class CLTrainer(Trainer):
             for i in range(total_samples):
                 gt_articles = gt_relevant_articles[i]
                 predicted_articles = predicted_relevant_articles[i]
-
-                if all(article in predicted_articles for article in gt_articles):
-                    correct_predictions += 1
+                if len(predicted_articles) > 1:
+                    if all(article in predicted_articles for article in gt_articles):
+                        correct_predictions += 1
+                elif len(predicted_articles) == 1:
+                    if all(article in gt_articles for article in predicted_articles):
+                        correct_predictions += 1
 
             accuracy = (correct_predictions / total_samples) * 100.0
             return accuracy
