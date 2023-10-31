@@ -132,7 +132,7 @@ class CLTrainer(Trainer):
             logger.info("Finished")
             for k in top_k:
                 results[f'acc_top_{k}'] = calculate_accuracy(gt_relevant_articles=gt_relevant_articles,
-                                                                  predicted_relevant_articles=predicted_relevant_articles[:k])
+                                                             predicted_relevant_articles=[predicted_relevant_article[:k] for predicted_relevant_article in predicted_relevant_articles])
 
             return results
         
