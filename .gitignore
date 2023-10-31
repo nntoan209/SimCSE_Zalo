@@ -2,6 +2,7 @@
 *.csv
 *.key
 legal_corpus.json
+*.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

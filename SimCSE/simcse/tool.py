@@ -76,8 +76,8 @@ class SimCSE(object):
                 return_numpy: bool = False,
                 normalize_to_unit: bool = True,
                 keepdim: bool = False,
-                batch_size: int = 32,
-                max_length: int = 128) -> Union[ndarray, Tensor]:
+                batch_size: int = 64,
+                max_length: int = 256) -> Union[ndarray, Tensor]:
 
         target_device = self.device if device is None else device
         self.model = self.model.to(target_device)
