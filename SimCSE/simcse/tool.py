@@ -90,7 +90,7 @@ class SimCSE(object):
         embedding_list = [] 
         with torch.no_grad():
             total_batch = len(sentence) // batch_size + (1 if len(sentence) % batch_size > 0 else 0)
-            for batch_id in tqdm(range(total_batch)):
+            for batch_id in tqdm(range(total_batch), position=0, leave=True):
                 inputs = self.tokenizer(
                     sentence[batch_id*batch_size:(batch_id+1)*batch_size], 
                     padding=True, 
@@ -252,8 +252,9 @@ class SimCSE(object):
             results = [(self.index["sentences"][idx], score) for idx, score in id_and_score]
             return results
         else:
+            logger.info("Encoding questions for searching...")
             query_vecs = self.encode(queries, device=device, normalize_to_unit=True, keepdim=True, return_numpy=True)
-
+            logger.info("Finish")
             distance, idx = self.index["index"].search(query_vecs.astype(np.float32), top_k)
             
             def pack_single_result(dist, idx):

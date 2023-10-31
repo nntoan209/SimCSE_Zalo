@@ -122,14 +122,14 @@ class CLTrainer(Trainer):
             #       ('A woman is reading.', 0.11100420355796814)]]
             search_results = simcse_object.search(questions, threshold=0.1, top_k=max_k)
             
-            # converting text chunk into law_id and article_id
+            logger.info("Converting text chunk into law_id and article_id...")
             predicted_relevant_articles = []
-            for sample in search_results:
+            for sample in tqdm(search_results):
                 predicted_relevant_articles_for_sample = []
                 for article in sample:
                     predicted_relevant_articles_for_sample.append(search_index(corpus_256, article[0]))
                 predicted_relevant_articles.append(predicted_relevant_articles_for_sample)
-            
+            logger.info("Finished")
             for k in top_k:
                 results[f'acc_top_{k}'] = calculate_accuracy(gt_relevant_articles=gt_relevant_articles,
                                                                   predicted_relevant_articles=predicted_relevant_articles[:k])

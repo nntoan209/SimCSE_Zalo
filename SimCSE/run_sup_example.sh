@@ -27,7 +27,7 @@ python train.py \
     --evaluation_strategy steps \
     --metric_for_best_model acc_top_10 \
     --load_best_model_at_end \
-    --eval_steps 125 \
+    --eval_steps 275 \
     --pooler_type cls \
     --overwrite_output_dir \
     --temp 0.05 \
