@@ -60,6 +60,7 @@ class SimCSE(object):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
+        logger.info(f"Device used for evaluation: {self.device}")
 
         self.index = None
         self.is_faiss_index = False
@@ -89,26 +90,48 @@ class SimCSE(object):
 
         embedding_list = [] 
         with torch.no_grad():
-            total_batch = len(sentence) // batch_size + (1 if len(sentence) % batch_size > 0 else 0)
-            for batch_id in tqdm(range(total_batch), position=0, leave=True):
-                inputs = self.tokenizer(
-                    sentence[batch_id*batch_size:(batch_id+1)*batch_size], 
-                    padding=True, 
-                    truncation=True, 
-                    max_length=max_length, 
-                    return_tensors="pt"
-                )
-                inputs = {k: v.to(target_device) for k, v in inputs.items()}
-                outputs = self.model(**inputs, return_dict=True, sent_emb=True)
-                if self.pooler == "cls":
-                    embeddings = outputs.pooler_output
-                elif self.pooler == "cls_before_pooler":
-                    embeddings = outputs.last_hidden_state[:, 0]
-                else:
-                    raise NotImplementedError
-                if normalize_to_unit:
-                    embeddings = embeddings / embeddings.norm(dim=1, keepdim=True)
-                embedding_list.append(embeddings.cpu())
+            if len(sentence) > 1:
+                total_batch = len(sentence) // batch_size + (1 if len(sentence) % batch_size > 0 else 0)
+                for batch_id in tqdm(range(total_batch), position=0, leave=True):
+                    inputs = self.tokenizer(
+                        sentence[batch_id*batch_size:(batch_id+1)*batch_size], 
+                        padding=True, 
+                        truncation=True, 
+                        max_length=max_length, 
+                        return_tensors="pt"
+                    )
+                    inputs = {k: v.to(target_device) for k, v in inputs.items()}
+                    outputs = self.model(**inputs, return_dict=True, sent_emb=True)
+                    if self.pooler == "cls":
+                        embeddings = outputs.pooler_output
+                    elif self.pooler == "cls_before_pooler":
+                        embeddings = outputs.last_hidden_state[:, 0]
+                    else:
+                        raise NotImplementedError
+                    if normalize_to_unit:
+                        embeddings = embeddings / embeddings.norm(dim=1, keepdim=True)
+                    embedding_list.append(embeddings.cpu())
+            elif len(sentence) == 1:
+                total_batch = len(sentence) // batch_size + (1 if len(sentence) % batch_size > 0 else 0)
+                for batch_id in range(total_batch):
+                    inputs = self.tokenizer(
+                        sentence[batch_id*batch_size:(batch_id+1)*batch_size], 
+                        padding=True, 
+                        truncation=True, 
+                        max_length=max_length, 
+                        return_tensors="pt"
+                    )
+                    inputs = {k: v.to(target_device) for k, v in inputs.items()}
+                    outputs = self.model(**inputs, return_dict=True, sent_emb=True)
+                    if self.pooler == "cls":
+                        embeddings = outputs.pooler_output
+                    elif self.pooler == "cls_before_pooler":
+                        embeddings = outputs.last_hidden_state[:, 0]
+                    else:
+                        raise NotImplementedError
+                    if normalize_to_unit:
+                        embeddings = embeddings / embeddings.norm(dim=1, keepdim=True)
+                    embedding_list.append(embeddings.cpu())
         embeddings = torch.cat(embedding_list, 0)
         
         if single_sentence and not keepdim:
@@ -237,10 +260,12 @@ class SimCSE(object):
         
         if not self.is_faiss_index:
             if isinstance(queries, list):
+                logger.info("Encoding questions for searching...")
                 combined_results = []
                 for query in queries:
                     results = self.search(query, device, threshold, top_k)
                     combined_results.append(results)
+                logger.info("Finished")
                 return combined_results
             
             similarities = self.similarity(queries, self.index["index"]).tolist()
@@ -252,9 +277,7 @@ class SimCSE(object):
             results = [(self.index["sentences"][idx], score) for idx, score in id_and_score]
             return results
         else:
-            logger.info("Encoding questions for searching...")
             query_vecs = self.encode(queries, device=device, normalize_to_unit=True, keepdim=True, return_numpy=True)
-            logger.info("Finish")
             distance, idx = self.index["index"].search(query_vecs.astype(np.float32), top_k)
             
             def pack_single_result(dist, idx):
