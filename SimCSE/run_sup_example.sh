@@ -19,15 +19,16 @@ python train.py \
     --model_name_or_path vinai/phobert-base-v2 \
     --train_file generated_data/train_data.csv \
     --output_dir result/supervise-simcse-phobert-base-v2 \
-    --do_mlm True \
+    --do_mlm False \
     --num_train_epochs 5 \
-    --per_device_train_batch_size 4 \
+    --per_device_train_batch_size 16 \
     --learning_rate 5e-5 \
     --max_seq_length 256 \
     --evaluation_strategy steps \
     --metric_for_best_model acc_top_10 \
     --load_best_model_at_end \
-    --eval_steps 500 \
+    --logging_steps 250 \
+    --eval_steps 250 \
     --pooler_type cls \
     --overwrite_output_dir \
     --temp 0.05 \

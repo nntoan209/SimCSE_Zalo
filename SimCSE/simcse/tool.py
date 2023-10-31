@@ -260,9 +260,9 @@ class SimCSE(object):
         
         if not self.is_faiss_index:
             if isinstance(queries, list):
-                logger.info("Encoding questions for searching...")
+                logger.info("Encoding questions and searching...")
                 combined_results = []
-                for query in queries:
+                for query in tqdm(queries, position=0, leave=True):
                     results = self.search(query, device, threshold, top_k)
                     combined_results.append(results)
                 logger.info("Finished")
