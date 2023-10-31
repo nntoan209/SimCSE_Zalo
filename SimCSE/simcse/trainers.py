@@ -71,7 +71,7 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 
-corpus_256 = pd.read_csv("/generated_data/corpus_256.csv", encoding='utf-8')
+corpus_256 = pd.read_csv("generated_data/corpus_256.csv", encoding='utf-8')
 law_chunks = list(corpus_256['text'].values)
 
 logger = logging.get_logger(__name__)
