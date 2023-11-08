@@ -115,14 +115,6 @@ class CLTrainer(Trainer):
         def calculate_metrics(simcse_object: SimCSE, top_k):
             max_k = max(top_k)
             results = {}
-            # results = simcse_object.search(["He plays guitar.", "She is watching books", "The baby is crying"], top_k=2, threshold=0.0)
-            # results
-            # >>> [[('A man is playing a guitar.', 0.8938425779342651),
-            #       ('The man is a guitarist', 0.7844030857086182)],
-            #      [('A woman is reading.', 0.6754494905471802),
-            #       ('The man is a guitarist', 0.06963314861059189)],
-            #      [('A baby is crying', 0.99134361743927),
-            #       ('A woman is reading.', 0.11100420355796814)]]
             search_results = simcse_object.search(questions, threshold=0.1, top_k=max_k)
             
             logger.info("Converting text chunk into law_id and article_id...")

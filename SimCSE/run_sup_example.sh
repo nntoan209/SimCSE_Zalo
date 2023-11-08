@@ -14,21 +14,22 @@ export OMP_NUM_THREADS=8
 
 # Use distributed data parallel
 # If you only want to use one card, uncomment the following line and comment the line with "torch.distributed.launch"
-# python -m torch.distributed.launch --nproc_per_node $NUM_GPU --master_port $PORT_ID train.py \
-python train.py \
+python -m torch.distributed.launch --nproc_per_node $NUM_GPU --master_port $PORT_ID train.py \
     --model_name_or_path vinai/phobert-base-v2 \
-    --train_file generated_data/train_data.csv \
+    --train_file generated_data/train_data_1_hardneg.csv \
     --output_dir result/supervise-simcse-phobert-base-v2 \
     --do_mlm False \
-    --num_train_epochs 5 \
+    --hard_negative_weight 0.25\
+    --num_train_epochs 20 \
     --per_device_train_batch_size 16 \
-    --learning_rate 5e-5 \
+    --learning_rate 4e-5 \
     --max_seq_length 256 \
     --evaluation_strategy steps \
     --metric_for_best_model acc_top_10 \
     --load_best_model_at_end \
-    --logging_steps 250 \
-    --eval_steps 250 \
+    --logging_steps 50 \
+    --save_steps 800 \
+    --eval_steps 800 \
     --pooler_type cls \
     --overwrite_output_dir \
     --temp 0.05 \

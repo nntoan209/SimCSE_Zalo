@@ -54,6 +54,16 @@ if __name__ == '__main__':
         law_id = law_article["law_id"]
         law_articles = law_article["articles"]
         
+        # Replace duplicating law_id
+        if law_id.endswith("nd-cp"):
+            law_id = law_id.replace("nd-cp", "nđ-cp")
+        if law_id.endswith("nđ-"):
+            law_id = law_id.replace("nđ-", "nđ-cp")
+        if law_id.endswith("nð-cp"):
+            law_id = law_id.replace("nð-cp", "nđ-cp")
+        if law_id == "09/2014/ttlt-btp-tandtc-vksndtc":
+            law_id = "09/2014/ttlt-btp-tandtc-vksndtc-btc"
+        
         for sub_article in law_articles:
             article_id = sub_article["article_id"]
             article_title = sub_article["title"]
@@ -70,6 +80,9 @@ if __name__ == '__main__':
     corpus_df = pd.DataFrame({"law_id": law_ids,
                                "article_id": article_ids,
                                "text": contents})
+    
+    corpus_df.drop_duplicates(keep='first', inplace=True)
+    corpus_df.reset_index(drop=True, inplace=True)
     
     corpus_df.to_csv(output_path, index=False, encoding='utf-8')
                     

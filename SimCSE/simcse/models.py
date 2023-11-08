@@ -162,16 +162,53 @@ def cl_forward(cls,
     # Hard negative
     if num_sent == 3:
         z3 = pooler_output[:, 2]
+    
+    # Hard code for multiple hard negatives
+    elif num_sent == 4:
+        z3 = pooler_output[:, 2]
+        z4 = pooler_output[:, 3]
+    elif num_sent == 5:
+        z3 = pooler_output[:, 2]
+        z4 = pooler_output[:, 3]
+        z5 = pooler_output[:, 4]
 
     # Gather all embeddings if using distributed training
     if dist.is_initialized() and cls.training:
         # Gather hard negative
-        if num_sent >= 3:
+        if num_sent == 3:
             z3_list = [torch.zeros_like(z3) for _ in range(dist.get_world_size())]
             dist.all_gather(tensor_list=z3_list, tensor=z3.contiguous())
             z3_list[dist.get_rank()] = z3
             z3 = torch.cat(z3_list, 0)
-
+            
+        # Hard code for multiple hard negatives
+        elif num_sent == 4:
+            z3_list = [torch.zeros_like(z3) for _ in range(dist.get_world_size())]
+            dist.all_gather(tensor_list=z3_list, tensor=z3.contiguous())
+            z3_list[dist.get_rank()] = z3
+            z3 = torch.cat(z3_list, 0)
+            
+            z4_list = [torch.zeros_like(z4) for _ in range(dist.get_world_size())]
+            dist.all_gather(tensor_list=z4_list, tensor=z4.contiguous())
+            z4_list[dist.get_rank()] = z4
+            z4 = torch.cat(z4_list, 0)
+            
+        elif num_sent == 5:
+            z3_list = [torch.zeros_like(z3) for _ in range(dist.get_world_size())]
+            dist.all_gather(tensor_list=z3_list, tensor=z3.contiguous())
+            z3_list[dist.get_rank()] = z3
+            z3 = torch.cat(z3_list, 0)
+            
+            z4_list = [torch.zeros_like(z4) for _ in range(dist.get_world_size())]
+            dist.all_gather(tensor_list=z4_list, tensor=z4.contiguous())
+            z4_list[dist.get_rank()] = z4
+            z4 = torch.cat(z4_list, 0)
+            
+            z5_list = [torch.zeros_like(z5) for _ in range(dist.get_world_size())]
+            dist.all_gather(tensor_list=z5_list, tensor=z5.contiguous())
+            z5_list[dist.get_rank()] = z5
+            z5 = torch.cat(z5_list, 0)
+        
         # Dummy vectors for allgather
         z1_list = [torch.zeros_like(z1) for _ in range(dist.get_world_size())]
         z2_list = [torch.zeros_like(z2) for _ in range(dist.get_world_size())]
@@ -189,20 +226,38 @@ def cl_forward(cls,
 
     cos_sim = cls.sim(z1.unsqueeze(1), z2.unsqueeze(0))
     # Hard negative
-    if num_sent >= 3:
+    if num_sent == 3:
         z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
         cos_sim = torch.cat([cos_sim, z1_z3_cos], 1)
+        
+    # Hard code for multiple hard negatives
+    elif num_sent == 4:
+        z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
+        z1_z4_cos = cls.sim(z1.unsqueeze(1), z4.unsqueeze(0))
+        cos_sim = torch.cat([cos_sim, z1_z3_cos, z1_z4_cos], 1)
+        
+    elif num_sent == 5:
+        z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
+        z1_z4_cos = cls.sim(z1.unsqueeze(1), z4.unsqueeze(0))
+        z1_z5_cos = cls.sim(z1.unsqueeze(1), z5.unsqueeze(0))
+        cos_sim = torch.cat([cos_sim, z1_z3_cos, z1_z4_cos, z1_z5_cos], 1)
 
     labels = torch.arange(cos_sim.size(0)).long().to(cls.device)
     loss_fct = nn.CrossEntropyLoss()
 
     # Calculate loss with hard negatives
-    if num_sent == 3:
+    if num_sent >= 3:
         # Note that weights are actually logits of weights
         z3_weight = cls.model_args.hard_negative_weight
-        weights = torch.tensor(
-            [[0.0] * (cos_sim.size(-1) - z1_z3_cos.size(-1)) + [0.0] * i + [z3_weight] + [0.0] * (z1_z3_cos.size(-1) - i - 1) for i in range(z1_z3_cos.size(-1))]
-        ).to(cls.device)
+        batch_size = cos_sim.size(0)
+        # weights = torch.tensor(
+        #     [[0.0] * (cos_sim.size(-1) - z1_z3_cos.size(-1)) + [0.0] * i + [z3_weight] + [0.0] * (z1_z3_cos.size(-1) - i - 1) for i in range(z1_z3_cos.size(-1))]
+        # ).to(cls.device)
+        weights = torch.zeros(batch_size, batch_size)
+        for _ in range(num_sent-2):
+            weights = torch.cat((weights, z3_weight * torch.eye(batch_size)), dim=1)
+        weights = weights.to(cls.device)
+        
         cos_sim = cos_sim + weights
 
     loss = loss_fct(cos_sim, labels)
@@ -218,7 +273,7 @@ def cl_forward(cls,
         output = (cos_sim,) + outputs[2:]
         return ((loss,) + output) if loss is not None else output
     return SequenceClassifierOutput(
-        loss=loss,
+        loss=loss,  
         logits=cos_sim,
         hidden_states=outputs.hidden_states,
         attentions=outputs.attentions,
