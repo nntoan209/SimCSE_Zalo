@@ -170,10 +170,11 @@ class SimCSE(object):
         return similarities
     
     def build_index(self, sentences_or_file_path: Union[str, List[str]], 
-                        use_faiss: bool = None,
-                        faiss_fast: bool = False,
-                        device: str = None,
-                        batch_size: int = 64):
+                    reference_ids: None,
+                    use_faiss: bool = None,
+                    faiss_fast: bool = False,
+                    device: str = None,
+                    batch_size: int = 64):
 
         if use_faiss is None or use_faiss:
             try:
@@ -197,7 +198,7 @@ class SimCSE(object):
         embeddings = self.encode(sentences_or_file_path, device=device, batch_size=batch_size, normalize_to_unit=True, return_numpy=True)
 
         logger.info("Building index...")
-        self.index = {"sentences": sentences_or_file_path}
+        self.index = {"sentences": sentences_or_file_path, "reference_ids": reference_ids}
         
         if use_faiss:
             quantizer = faiss.IndexFlatIP(embeddings.shape[1])  
@@ -274,7 +275,7 @@ class SimCSE(object):
                 if s >= threshold:
                     id_and_score.append((i, s))
             id_and_score = sorted(id_and_score, key=lambda x: x[1], reverse=True)[:top_k]
-            results = [(self.index["sentences"][idx], score) for idx, score in id_and_score]
+            results = [({"law_id": self.index["reference_ids"][idx][0], "article_id": str(self.index["reference_ids"][idx][1])}, score) for idx, score in id_and_score]
             return results
         else:
             query_vecs = self.encode(queries, device=device, normalize_to_unit=True, keepdim=True, return_numpy=True)

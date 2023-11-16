@@ -73,6 +73,7 @@ import pandas as pd
 
 corpus_256 = pd.read_csv("generated_data/corpus_256.csv", encoding='utf-8')
 law_chunks = list(corpus_256['text'].values)
+reference_ids = corpus_256[['law_id', 'article_id']].values
 
 logger = logging.get_logger(__name__)
 
@@ -108,23 +109,18 @@ class CLTrainer(Trainer):
             accuracy = (correct_predictions / total_samples) * 100.0
             return accuracy
         
-        def search_index(reference_csv: pd.DataFrame, text: str):
-            law_id, article_id = reference_csv[reference_csv['text']==text].values[0, :2]
-            return {"law_id": law_id, "article_id": str(article_id)}
-        
         def calculate_metrics(simcse_object: SimCSE, top_k):
             max_k = max(top_k)
             results = {}
             search_results = simcse_object.search(questions, threshold=0.1, top_k=max_k)
             
-            logger.info("Converting text chunk into law_id and article_id...")
             predicted_relevant_articles = []
             for sample in tqdm(search_results, position=0, leave=True):
                 predicted_relevant_articles_for_sample = []
                 for article in sample:
-                    predicted_relevant_articles_for_sample.append(search_index(corpus_256, article[0]))
+                    predicted_relevant_articles_for_sample.append(article[0])
                 predicted_relevant_articles.append(predicted_relevant_articles_for_sample)
-            logger.info("Finished")
+       
             for k in top_k:
                 results[f'acc_top_{k}'] = calculate_accuracy(gt_relevant_articles=gt_relevant_articles,
                                                              predicted_relevant_articles=[predicted_relevant_article[:k] for predicted_relevant_article in predicted_relevant_articles])
@@ -134,7 +130,7 @@ class CLTrainer(Trainer):
         self.model.eval()
         
         simcse_object = SimCSE(model=self.model, tokenizer=self.tokenizer)
-        simcse_object.build_index(law_chunks)
+        simcse_object.build_index(law_chunks, reference_ids)
         
         results = calculate_metrics(simcse_object,
                                     top_k=[1, 10, 100])
@@ -315,13 +311,14 @@ class CLTrainer(Trainer):
             num_update_steps_per_epoch = max_steps
 
         if self.args.deepspeed:
-            # model, optimizer, lr_scheduler = init_deepspeed(self, num_training_steps=max_steps)
-            # self.model = model.module
-            # self.model_wrapped = model  # will get further wrapped in DDP
-            # self.deepspeed = model  # DeepSpeedEngine object
-            # self.optimizer = optimizer
-            # self.lr_scheduler = lr_scheduler
-            pass
+            from transformers.deepspeed import deepspeed_init
+            model, optimizer, lr_scheduler = deepspeed_init(self, num_training_steps=max_steps)
+            self.model = model.module
+            self.model_wrapped = model  # will get further wrapped in DDP
+            self.deepspeed = model  # DeepSpeedEngine object
+            self.optimizer = optimizer
+            self.lr_scheduler = lr_scheduler
+    
         else:
             self.create_optimizer_and_scheduler(num_training_steps=max_steps)
 
