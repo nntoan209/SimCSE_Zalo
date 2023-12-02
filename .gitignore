@@ -3,6 +3,8 @@
 *.key
 legal_corpus.json
 *.ipynb
+msmarco_vietnamese/
+squadv2/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

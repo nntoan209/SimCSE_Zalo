@@ -60,7 +60,6 @@ class SimCSE(object):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
-        logger.info(f"Device used for evaluation: {self.device}")
 
         self.index = None
         self.is_faiss_index = False
@@ -101,7 +100,7 @@ class SimCSE(object):
                         return_tensors="pt"
                     )
                     inputs = {k: v.to(target_device) for k, v in inputs.items()}
-                    outputs = self.model(**inputs, return_dict=True, sent_emb=True)
+                    outputs = self.model(**inputs, has_hard_negative=None, return_dict=True, sent_emb=True)
                     if self.pooler == "cls":
                         embeddings = outputs.pooler_output
                     elif self.pooler == "cls_before_pooler":
@@ -122,7 +121,7 @@ class SimCSE(object):
                         return_tensors="pt"
                     )
                     inputs = {k: v.to(target_device) for k, v in inputs.items()}
-                    outputs = self.model(**inputs, return_dict=True, sent_emb=True)
+                    outputs = self.model(**inputs, has_hard_negative=None, return_dict=True, sent_emb=True)
                     if self.pooler == "cls":
                         embeddings = outputs.pooler_output
                     elif self.pooler == "cls_before_pooler":
@@ -227,7 +226,6 @@ class SimCSE(object):
             index = embeddings
             self.is_faiss_index = False
         self.index["index"] = index
-        logger.info("Finished")
 
     def add_to_index(self, sentences_or_file_path: Union[str, List[str]],
                         device: str = None,
@@ -266,7 +264,6 @@ class SimCSE(object):
                 for query in tqdm(queries, position=0, leave=True):
                     results = self.search(query, device, threshold, top_k)
                     combined_results.append(results)
-                logger.info("Finished")
                 return combined_results
             
             similarities = self.similarity(queries, self.index["index"]).tolist()

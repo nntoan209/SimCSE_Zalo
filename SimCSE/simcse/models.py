@@ -92,6 +92,7 @@ def cl_init(cls, config):
 
 def cl_forward(cls,
     encoder,
+    has_hard_negative,
     input_ids=None,
     attention_mask=None,
     token_type_ids=None,
@@ -223,6 +224,12 @@ def cl_forward(cls,
         # Get full batch embeddings: (bs x N, hidden)
         z1 = torch.cat(z1_list, 0)
         z2 = torch.cat(z2_list, 0)
+        
+        if has_hard_negative:
+            has_hard_negative_list = [torch.zeros_like(has_hard_negative) for _ in range(dist.get_world_size())]
+            dist.all_gather(tensor_list=has_hard_negative_list, tensor=has_hard_negative.contiguous())
+            has_hard_negative_list[dist.get_rank()] = has_hard_negative
+            has_hard_negative = torch.cat(has_hard_negative_list, 0)
 
     cos_sim = cls.sim(z1.unsqueeze(1), z2.unsqueeze(0))
     # Hard negative
@@ -259,7 +266,10 @@ def cl_forward(cls,
         weights = weights.to(cls.device)
         
         cos_sim = cos_sim + weights
-
+        if has_hard_negative:
+            filter = 1e6 * (torch.cat((torch.ones(batch_size).to(cls.device), has_hard_negative)) - 1)
+            cos_sim = cos_sim + filter
+        
     loss = loss_fct(cos_sim, labels)
 
     # Calculate loss for MLM
@@ -336,6 +346,7 @@ class RobertaForCL(RobertaPreTrainedModel):
         cl_init(self, config)
 
     def forward(self,
+        has_hard_negative=None,
         input_ids=None,
         attention_mask=None,
         token_type_ids=None,
@@ -365,6 +376,7 @@ class RobertaForCL(RobertaPreTrainedModel):
             )
         else:
             return cl_forward(self, self.roberta,
+                has_hard_negative = has_hard_negative,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 token_type_ids=token_type_ids,

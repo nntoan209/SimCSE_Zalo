@@ -1,47 +1,33 @@
 import logging
-import math
 import os
 import sys
 from dataclasses import dataclass, field
 from typing import Optional, Union, List, Dict, Tuple
 import torch
-import collections
-import random
-
-os.environ["WANDB_PROJECT"] = "simcse-zalo-msmarco"
-
-from datasets import load_dataset
-
 import transformers
 from transformers import (
     CONFIG_MAPPING,
     MODEL_FOR_MASKED_LM_MAPPING,
     AutoConfig,
     AutoModelForMaskedLM,
-    AutoModelForSequenceClassification,
     AutoTokenizer,
-    DataCollatorForLanguageModeling,
-    DataCollatorWithPadding,
     HfArgumentParser,
-    Trainer,
     TrainingArguments,
     default_data_collator,
     set_seed,
-    EvalPrediction,
-    BertModel,
-    BertForPreTraining,
-    RobertaModel
 )
-from transformers.tokenization_utils_base import BatchEncoding, PaddingStrategy, PreTrainedTokenizerBase
+from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase
 from transformers.trainer_utils import is_main_process
-from transformers.data.data_collator import DataCollatorForLanguageModeling
-from transformers.file_utils import cached_property, is_torch_available, is_torch_tpu_available, torch_required
+from transformers.file_utils import cached_property, is_torch_tpu_available, torch_required
 from simcse.models import RobertaForCL
 from simcse.trainers import CLTrainer
+from simcse.custom_dataset import get_dataset
 
 logger = logging.getLogger(__name__)
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
+
+os.environ["WANDB_PROJECT"] = "simcse-zalo-msmarco"
 
 @dataclass
 class ModelArguments:
@@ -113,7 +99,7 @@ class ModelArguments:
         }
     )
     mlm_weight: float = field(
-        default=0.2,
+        default=0.1,
         metadata={
             "help": "Weight for MLM auxiliary objective (only effective if --do_mlm)."
         }
@@ -154,9 +140,17 @@ class DataTrainingArguments:
     )
 
     # SimCSE's arguments
+    dataset_type: Optional[str] = field(
+        default="news", 
+        metadata={"help": "The type of training data"}
+    )
     train_file: Optional[str] = field(
         default=None, 
         metadata={"help": "The training data file (.txt or .csv)."}
+    )
+    collection_file: Optional[str] = field(
+        default=None, 
+        metadata={"help": "The training collection file"}
     )
     max_seq_length: Optional[int] = field(
         default=32,
@@ -293,29 +287,6 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
-    # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
-    # (the dataset will be downloaded automatically from the datasets Hub
-    #
-    # For CSV/JSON files, this script will use the column called 'text' or the first column. You can easily tweak this
-    # behavior (see below)
-    #
-    # In distributed training, the load_dataset function guarantee that only one local process can concurrently
-    # download the dataset.
-    data_files = {}
-    if data_args.train_file is not None:
-        data_files["train"] = data_args.train_file
-    extension = data_args.train_file.split(".")[-1]
-    if extension == "txt":
-        extension = "text"
-    if extension == "csv":
-        datasets = load_dataset(extension, data_files=data_files, cache_dir="./data/", delimiter="\t" if "tsv" in data_args.train_file else ",")
-    else:
-        datasets = load_dataset(extension, data_files=data_files, cache_dir="./data/")
-
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
-
     # Load pretrained model and tokenizer
     #
     # Distributed training:
@@ -369,84 +340,31 @@ def main():
         model = AutoModelForMaskedLM.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
-
-    # Prepare features
-    column_names = datasets["train"].column_names
-    hard_neg_cnames = None
-    if len(column_names) == 1:
-        # Unsupervised datasets
-        sent0_cname = column_names[0]
-        sent1_cname = column_names[0]
-    elif len(column_names) == 2:
-        # Pair datasets
-        sent0_cname = column_names[0]
-        sent1_cname = column_names[1]
-    elif len(column_names) >= 3:
-        # Pair datasets with hard negatives
-        sent0_cname = column_names[0]
-        sent1_cname = column_names[1]
-        hard_neg_cnames = column_names[2:]
-    else:
-        raise NotImplementedError
-
-    def prepare_features(examples):
-        # padding = longest (default)
-        #   If no sentence in the batch exceed the max length, then use
-        #   the max sentence length in the batch, otherwise use the 
-        #   max sentence length in the argument and truncate those that
-        #   exceed the max length.
-        # padding = max_length (when pad_to_max_length, for pressure test)
-        #   All sentences are padded/truncated to data_args.max_seq_length.
-        total = len(examples[sent0_cname])
-
-        # Avoid "None" fields 
-        for idx in range(total):
-            if examples[sent0_cname][idx] is None:
-                examples[sent0_cname][idx] = " "
-            if examples[sent1_cname][idx] is None:
-                examples[sent1_cname][idx] = " "
-        
-        sentences = examples[sent0_cname] + examples[sent1_cname]
-
-        # If hard negatives exist
-        if hard_neg_cnames is not None:
-            for sent2_cname in hard_neg_cnames:
-                for idx in range(total):
-                    if examples[sent2_cname][idx] is None:
-                        examples[sent2_cname][idx] = " "
-                sentences += examples[sent2_cname]
-
-        sent_features = tokenizer(
-            sentences,
-            max_length=data_args.max_seq_length,
-            truncation=True,
-            padding="max_length" if data_args.pad_to_max_length else False,
-        )
-
-        features = {}
-        # if hard_neg_cnames is not None:
-        #     for key in sent_features:
-        #         features[key] = [[sent_features[key][i], sent_features[key][i+total], sent_features[key][i+total*2]] for i in range(total)]
-        # else:
-        #     for key in sent_features:
-        #         features[key] = [[sent_features[key][i], sent_features[key][i+total]] for i in range(total)]
-                
-        for key in sent_features:
-            features[key] = [[sent_features[key][i], sent_features[key][i+total]] for i in range(total)]
-            if hard_neg_cnames is not None:
-                num_hard_neg = len(hard_neg_cnames)
-                for i in range(total):
-                    features[key][i].extend([sent_features[key][i+total*(j+2)] for j in range(num_hard_neg)])
-        return features
+    
+    # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
+    # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
+    # (the dataset will be downloaded automatically from the datasets Hub
+    #
+    # For CSV/JSON files, this script will use the column called 'text' or the first column. You can easily tweak this
+    # behavior (see below)
+    #
+    # In distributed training, the load_dataset function guarantee that only one local process can concurrently
+    # download the dataset.
+    if data_args.train_file is not None:
+        train_file = data_args.train_file
+    if data_args.collection_file is not None:
+        collection_file = data_args.collection_file
+    logger.info("Loading dataset...")
+    datasets = get_dataset(type=data_args.dataset_type,
+                           tokenizer=tokenizer,
+                           train_file=train_file,
+                           collection_file=collection_file)
+                           
+    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
+    # https://huggingface.co/docs/datasets/loading_datasets.html.
 
     if training_args.do_train:
-        train_dataset = datasets["train"].map(
-            prepare_features,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
+        train_dataset = datasets
 
     # Data collator
     @dataclass
@@ -482,6 +400,8 @@ def main():
                 batch["mlm_input_ids"], batch["mlm_labels"] = self.mask_tokens(batch["input_ids"])
 
             batch = {k: batch[k].view(bs, num_sent, -1) if k in special_keys else batch[k].view(bs, num_sent, -1)[:, 0] for k in batch}
+            if data_args.dataset_type == "news":
+                batch['has_hard_negative'] = torch.Tensor([feature['has_hard_negative'] for feature in features])
 
             if "label" in batch:
                 batch["labels"] = batch["label"]
@@ -550,9 +470,11 @@ def main():
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
         if trainer.is_world_process_zero():
             with open(output_train_file, "w") as writer:
-                logger.info("***** Train results *****")
+                # logger.info("***** Train results *****")
+                print("***** Train results *****")
                 for key, value in sorted(train_result.metrics.items()):
-                    logger.info(f"  {key} = {value}")
+                    # logger.info(f"  {key} = {value}")
+                    print(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
 
             # Need to save the state, since Trainer.save_model saves only the tokenizer with the model
@@ -561,23 +483,21 @@ def main():
     # Evaluation
     results = {}
     if training_args.do_eval:
-        logger.info("*** Evaluate ***")
+        # logger.info("*** Evaluate ***")
+        print("*** Evaluate ***")
         results = trainer.evaluate()
 
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
         if trainer.is_world_process_zero():
             with open(output_eval_file, "w") as writer:
-                logger.info("***** Eval results *****")
+                # logger.info("***** Eval results *****")
+                print("***** Eval results *****")
                 for key, value in sorted(results.items()):
-                    logger.info(f"  {key} = {value}")
+                    # logger.info(f"  {key} = {value}")
+                    print(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
 
     return results
-
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
-
 
 if __name__ == "__main__":
     main()

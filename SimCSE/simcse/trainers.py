@@ -120,7 +120,7 @@ class CLTrainer(Trainer):
                 for article in sample:
                     predicted_relevant_articles_for_sample.append(article[0])
                 predicted_relevant_articles.append(predicted_relevant_articles_for_sample)
-       
+
             for k in top_k:
                 results[f'acc_top_{k}'] = calculate_accuracy(gt_relevant_articles=gt_relevant_articles,
                                                              predicted_relevant_articles=[predicted_relevant_article[:k] for predicted_relevant_article in predicted_relevant_articles])
@@ -495,11 +495,11 @@ class CLTrainer(Trainer):
                             self.optimizer.clip_grad_norm(self.args.max_grad_norm)
                         else:
                             # Revert to normal clipping otherwise, handling Apex or full precision
-                            # torch.nn.utils.clip_grad_norm_(
-                            #     amp.master_params(self.optimizer) if self.use_apex else model.parameters(),
-                            #     self.args.max_grad_norm,
-                            # )
-                            pass
+                            torch.nn.utils.clip_grad_norm_(
+                                amp.master_params(self.optimizer) if self.use_apex else model.parameters(),
+                                self.args.max_grad_norm,
+                            )
+                            
 
                     # Optimizer step
                     if is_torch_tpu_available():
