@@ -351,7 +351,7 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        if ('roberta' in model_args.model_name_or_path) or ('phobert' in model_args.model_name_or_path):
+        if ('roberta' in model_args.model_name_or_path) or ('phobert' in model_args.model_name_or_path) or ('bkai' in model_args.model_name_or_path):
             model = RobertaForCL.from_pretrained(
                 model_args.model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
