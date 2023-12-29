@@ -16,33 +16,6 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def collate_function(data):
-    question_ids, questions, relevant_articles = zip(*data)
-    return question_ids, questions, relevant_articles
-
-class EvalSimCSEDataset(Dataset):
-    def __init__(self, eval_data_path):
-        with open(eval_data_path, encoding='utf-8') as f:
-            self.data = json.load(f)
-    
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        question_id = item['question_id']
-        question = item['question']
-        relevant_articles = item['relevant_articles']
-        
-        return question_id, question, relevant_articles
-    
-def get_dataloader(eval_data_path: str, batch_size: int):
-    dataset = EvalSimCSEDataset(eval_data_path=eval_data_path)
-    
-    return DataLoader(dataset,
-                      batch_size=batch_size,
-                      collate_fn=collate_function)
-
 class SimCSE(object):
     """
     A class for embedding sentences, calculating similarities, and retriving sentences by SimCSE.
@@ -100,7 +73,7 @@ class SimCSE(object):
                         return_tensors="pt"
                     )
                     inputs = {k: v.to(target_device) for k, v in inputs.items()}
-                    outputs = self.model(**inputs, has_hard_negative=None, return_dict=True, sent_emb=True)
+                    outputs = self.model(**inputs, return_dict=True, sent_emb=True)
                     if self.pooler == "cls":
                         embeddings = outputs.pooler_output
                     elif self.pooler == "cls_before_pooler":
@@ -121,7 +94,7 @@ class SimCSE(object):
                         return_tensors="pt"
                     )
                     inputs = {k: v.to(target_device) for k, v in inputs.items()}
-                    outputs = self.model(**inputs, has_hard_negative=None, return_dict=True, sent_emb=True)
+                    outputs = self.model(**inputs, return_dict=True, sent_emb=True)
                     if self.pooler == "cls":
                         embeddings = outputs.pooler_output
                     elif self.pooler == "cls_before_pooler":
@@ -181,7 +154,7 @@ class SimCSE(object):
                 assert hasattr(faiss, "IndexFlatIP")
                 use_faiss = True 
             except:
-                logger.warning("Fail to import faiss. If you want to use faiss, install faiss through PyPI. Now the program continues with brute force search.")
+                logger.warning("Fail to import faiss. Now the program continues with brute force search.")
                 use_faiss = False
         
         # if the input sentence is a string, we assume it's the path of file that stores various sentences
@@ -250,7 +223,6 @@ class SimCSE(object):
         self.index["sentences"] += sentences_or_file_path
         logger.info("Finished")
 
-
     
     def search(self, queries: Union[str, List[str]], 
                 device: str = None, 
@@ -272,7 +244,7 @@ class SimCSE(object):
                 if s >= threshold:
                     id_and_score.append((i, s))
             id_and_score = sorted(id_and_score, key=lambda x: x[1], reverse=True)[:top_k]
-            results = [({"law_id": self.index["reference_ids"][idx][0], "article_id": str(self.index["reference_ids"][idx][1])}, score) for idx, score in id_and_score]
+            results = [({"law_id": self.index["reference_ids"][idx].split()[0], "article_id": str(self.index["reference_ids"][idx].split()[1])}, score) for idx, score in id_and_score]
             return results
         else:
             query_vecs = self.encode(queries, device=device, normalize_to_unit=True, keepdim=True, return_numpy=True)

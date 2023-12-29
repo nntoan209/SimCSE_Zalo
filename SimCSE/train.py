@@ -9,6 +9,7 @@ import collections
 import random
 
 os.environ["WANDB_PROJECT"] = "simcse-zalo-msmarco"
+os.environ["WANDB_DISABLED"] = "true"
 
 from datasets import load_dataset
 
@@ -92,6 +93,12 @@ class ModelArguments:
         default=0.05,
         metadata={
             "help": "Temperature for softmax."
+        }
+    )
+    use_in_batch_negative: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use in batch negative to calculate the loss"
         }
     )
     pooler_type: str = field(
@@ -351,7 +358,7 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        if ('roberta' in model_args.model_name_or_path) or ('phobert' in model_args.model_name_or_path) or ('bkai' in model_args.model_name_or_path):
+        if ('roberta' in model_args.model_name_or_path) or ('phobert' in model_args.model_name_or_path):
             model = RobertaForCL.from_pretrained(
                 model_args.model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -561,18 +568,15 @@ def main():
     # Evaluation
     results = {}
     if training_args.do_eval:
-        # logger.info("*** Evaluate ***")
-        print("*** Evaluate ***")
+        logger.info("*** Evaluate ***")
         results = trainer.evaluate()
 
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
         if trainer.is_world_process_zero():
             with open(output_eval_file, "w") as writer:
-                # logger.info("***** Eval results *****")
-                print("***** Eval results *****")
+                logger.info("***** Eval results *****")
                 for key, value in sorted(results.items()):
-                    # logger.info(f"  {key} = {value}")
-                    print(f"  {key} = {value}")
+                    logger.info(f"  {key} = {value}")
                     writer.write(f"{key} = {value}\n")
 
     return results

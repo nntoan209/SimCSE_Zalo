@@ -21,13 +21,14 @@ from transformers.trainer_utils import is_main_process
 from transformers.file_utils import cached_property, is_torch_tpu_available, torch_required
 from simcse.models import RobertaForCL
 from simcse.trainers import CLTrainer
-from simcse.custom_dataset import get_dataset
+from simcse.custom_dataset import SimCSEDataset, ZaloData, MSMARCOData, SquadV2Data
 
 logger = logging.getLogger(__name__)
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
-os.environ["WANDB_PROJECT"] = "simcse-zalo-msmarco"
+os.environ["WANDB_DISABLE"] = "true"
+os.environ["WANDB_PROJECT"] = "simcse-zalo-msmarco-squadv2"
 
 @dataclass
 class ModelArguments:
@@ -78,6 +79,12 @@ class ModelArguments:
         default=0.05,
         metadata={
             "help": "Temperature for softmax."
+        }
+    )
+    use_in_batch_negative: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use in batch negative to calculate the loss"
         }
     )
     pooler_type: str = field(
@@ -140,17 +147,29 @@ class DataTrainingArguments:
     )
 
     # SimCSE's arguments
-    dataset_type: Optional[str] = field(
-        default="news", 
-        metadata={"help": "The type of training data"}
-    )
-    train_file: Optional[str] = field(
+    zalo_train_file: Optional[str] = field(
         default=None, 
-        metadata={"help": "The training data file (.txt or .csv)."}
+        metadata={"help": "The zalo training data file"}
     )
-    collection_file: Optional[str] = field(
+    zalo_collection_file: Optional[str] = field(
         default=None, 
-        metadata={"help": "The training collection file"}
+        metadata={"help": "The zalo training collection file"}
+    )
+    msmarco_train_file: Optional[str] = field(
+        default=None, 
+        metadata={"help": "The msmarco training data file"}
+    )
+    msmarco_collection_file: Optional[str] = field(
+        default=None, 
+        metadata={"help": "The msmarco training collection file"}
+    )
+    squadv2_train_file: Optional[str] = field(
+        default=None, 
+        metadata={"help": "The squadv2 training data file"}
+    )
+    squadv2_collection_file: Optional[str] = field(
+        default=None, 
+        metadata={"help": "The squadv2 training collection file"}
     )
     max_seq_length: Optional[int] = field(
         default=32,
@@ -172,11 +191,11 @@ class DataTrainingArguments:
     )
 
     def __post_init__(self):
-        if self.dataset_name is None and self.train_file is None and self.validation_file is None:
+        if self.dataset_name is None and self.zalo_train_file is None and self.validation_file is None:
             raise ValueError("Need either a dataset name or a training/validation file.")
         else:
-            if self.train_file is not None:
-                extension = self.train_file.split(".")[-1]
+            if self.zalo_train_file is not None:
+                extension = self.zalo_train_file.split(".")[-1]
                 assert extension in ["csv", "json", "txt"], "`train_file` should be a csv, a json or a txt file."
 
 
@@ -322,7 +341,7 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        if ('roberta' in model_args.model_name_or_path) or ('phobert' in model_args.model_name_or_path):
+        if ('roberta' in model_args.model_name_or_path) or ('phobert' in model_args.model_name_or_path) or ('bkai' in model_args.model_name_or_path):
             model = RobertaForCL.from_pretrained(
                 model_args.model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -350,15 +369,22 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if data_args.train_file is not None:
-        train_file = data_args.train_file
-    if data_args.collection_file is not None:
-        collection_file = data_args.collection_file
     logger.info("Loading dataset...")
-    datasets = get_dataset(type=data_args.dataset_type,
-                           tokenizer=tokenizer,
-                           train_file=train_file,
-                           collection_file=collection_file)
+    
+    data_list = []
+    if (data_args.zalo_train_file is not None) and (data_args.zalo_collection_file is not None):
+        zalo_data = ZaloData(train_triples_file=data_args.zalo_train_file, collection_file=data_args.zalo_collection_file)     
+        data_list.append(zalo_data)
+        
+    if (data_args.msmarco_train_file is not None) and (data_args.msmarco_collection_file is not None):
+        msmarco_data = MSMARCOData(train_triples_file=data_args.msmarco_train_file, collection_file=data_args.msmarco_collection_file)
+        data_list.append(msmarco_data)
+        
+    if (data_args.squadv2_train_file is not None) and (data_args.squadv2_collection_file is not None):
+        squadv2_data = SquadV2Data(train_triples_file=data_args.squadv2_train_file, collection_file=data_args.squadv2_collection_file)
+        data_list.append(squadv2_data)
+    datasets = SimCSEDataset(tokenizer=tokenizer,
+                             data_list=data_list)
                            
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
@@ -400,8 +426,6 @@ def main():
                 batch["mlm_input_ids"], batch["mlm_labels"] = self.mask_tokens(batch["input_ids"])
 
             batch = {k: batch[k].view(bs, num_sent, -1) if k in special_keys else batch[k].view(bs, num_sent, -1)[:, 0] for k in batch}
-            if data_args.dataset_type == "news":
-                batch['has_hard_negative'] = torch.Tensor([feature['has_hard_negative'] for feature in features])
 
             if "label" in batch:
                 batch["labels"] = batch["label"]

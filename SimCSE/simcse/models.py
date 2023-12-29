@@ -92,7 +92,6 @@ def cl_init(cls, config):
 
 def cl_forward(cls,
     encoder,
-    has_hard_negative,
     input_ids=None,
     attention_mask=None,
     token_type_ids=None,
@@ -163,7 +162,7 @@ def cl_forward(cls,
     # Hard negative
     if num_sent == 3:
         z3 = pooler_output[:, 2]
-    
+
     # Hard code for multiple hard negatives
     elif num_sent == 4:
         z3 = pooler_output[:, 2]
@@ -199,7 +198,7 @@ def cl_forward(cls,
             dist.all_gather(tensor_list=z3_list, tensor=z3.contiguous())
             z3_list[dist.get_rank()] = z3
             z3 = torch.cat(z3_list, 0)
-            
+
             z4_list = [torch.zeros_like(z4) for _ in range(dist.get_world_size())]
             dist.all_gather(tensor_list=z4_list, tensor=z4.contiguous())
             z4_list[dist.get_rank()] = z4
@@ -224,52 +223,71 @@ def cl_forward(cls,
         # Get full batch embeddings: (bs x N, hidden)
         z1 = torch.cat(z1_list, 0)
         z2 = torch.cat(z2_list, 0)
-        
-        if has_hard_negative:
-            has_hard_negative_list = [torch.zeros_like(has_hard_negative) for _ in range(dist.get_world_size())]
-            dist.all_gather(tensor_list=has_hard_negative_list, tensor=has_hard_negative.contiguous())
-            has_hard_negative_list[dist.get_rank()] = has_hard_negative
-            has_hard_negative = torch.cat(has_hard_negative_list, 0)
 
-    cos_sim = cls.sim(z1.unsqueeze(1), z2.unsqueeze(0))
-    # Hard negative
-    if num_sent == 3:
-        z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
-        cos_sim = torch.cat([cos_sim, z1_z3_cos], 1)
-        
-    # Hard code for multiple hard negatives
-    elif num_sent == 4:
-        z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
-        z1_z4_cos = cls.sim(z1.unsqueeze(1), z4.unsqueeze(0))
-        cos_sim = torch.cat([cos_sim, z1_z3_cos, z1_z4_cos], 1)
-        
-    elif num_sent == 5:
-        z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
-        z1_z4_cos = cls.sim(z1.unsqueeze(1), z4.unsqueeze(0))
-        z1_z5_cos = cls.sim(z1.unsqueeze(1), z5.unsqueeze(0))
-        cos_sim = torch.cat([cos_sim, z1_z3_cos, z1_z4_cos, z1_z5_cos], 1)
+    if cls.model_args.use_in_batch_negative:
+        cos_sim = cls.sim(z1.unsqueeze(1), z2.unsqueeze(0))
+        # Hard negative
+        if num_sent == 3:
+            z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
+            cos_sim = torch.cat([cos_sim, z1_z3_cos], 1)
+            
+        # Hard code for multiple hard negatives
+        elif num_sent == 4:
+            z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
+            z1_z4_cos = cls.sim(z1.unsqueeze(1), z4.unsqueeze(0))
+            cos_sim = torch.cat([cos_sim, z1_z3_cos, z1_z4_cos], 1)
+            
+        elif num_sent == 5:
+            z1_z3_cos = cls.sim(z1.unsqueeze(1), z3.unsqueeze(0))
+            z1_z4_cos = cls.sim(z1.unsqueeze(1), z4.unsqueeze(0))
+            z1_z5_cos = cls.sim(z1.unsqueeze(1), z5.unsqueeze(0))
+            cos_sim = torch.cat([cos_sim, z1_z3_cos, z1_z4_cos, z1_z5_cos], 1)
 
-    labels = torch.arange(cos_sim.size(0)).long().to(cls.device)
-    loss_fct = nn.CrossEntropyLoss()
+        labels = torch.arange(cos_sim.size(0)).long().to(cls.device)
+        loss_fct = nn.CrossEntropyLoss()
 
-    # Calculate loss with hard negatives
-    if num_sent >= 3:
+        # Calculate loss with hard negatives
+        if num_sent >= 3:
+            # Note that weights are actually logits of weights
+            z3_weight = cls.model_args.hard_negative_weight
+            batch_size = cos_sim.size(0)
+            # weights = torch.tensor(
+            #     [[0.0] * (cos_sim.size(-1) - z1_z3_cos.size(-1)) + [0.0] * i + [z3_weight] + [0.0] * (z1_z3_cos.size(-1) - i - 1) for i in range(z1_z3_cos.size(-1))]
+            # ).to(cls.device)
+            weights = torch.zeros(batch_size, batch_size)
+            for _ in range(num_sent-2):
+                weights = torch.cat((weights, z3_weight * torch.eye(batch_size)), dim=1)
+            weights = weights.to(cls.device)
+            
+            cos_sim = cos_sim + weights
+                    
+    else:
+        z1_z2_cos = cls.sim(z1, z2).unsqueeze(0)
+        if num_sent == 3:
+            z1_z3_cos = cls.sim(z1, z3).unsqueeze(0)
+            cos_sim = torch.cat((z1_z2_cos, z1_z3_cos), 0).transpose(1, 0)
+        elif num_sent == 4:
+            z1_z3_cos = cls.sim(z1, z3).unsqueeze(0)
+            z1_z4_cos = cls.sim(z1, z4).unsqueeze(0)
+            cos_sim = torch.cat((z1_z2_cos, z1_z3_cos, z1_z4_cos), 0).transpose(1, 0)
+        elif num_sent == 5:
+            z1_z3_cos = cls.sim(z1, z3).unsqueeze(0)
+            z1_z4_cos = cls.sim(z1, z4).unsqueeze(0)
+            z1_z5_cos = cls.sim(z1, z5).unsqueeze(0)
+            cos_sim = torch.cat((z1_z2_cos, z1_z3_cos, z1_z4_cos, z1_z5_cos), 0).transpose(1, 0)
+        else: 
+            raise NotImplementedError
+            
+        labels = torch.zeros(cos_sim.size(0)).long().to(cls.device)
+        loss_fct = nn.CrossEntropyLoss()
+        
+        # Hard negatives weight
         # Note that weights are actually logits of weights
-        z3_weight = cls.model_args.hard_negative_weight
-        batch_size = cos_sim.size(0)
-        # weights = torch.tensor(
-        #     [[0.0] * (cos_sim.size(-1) - z1_z3_cos.size(-1)) + [0.0] * i + [z3_weight] + [0.0] * (z1_z3_cos.size(-1) - i - 1) for i in range(z1_z3_cos.size(-1))]
-        # ).to(cls.device)
-        weights = torch.zeros(batch_size, batch_size)
-        for _ in range(num_sent-2):
-            weights = torch.cat((weights, z3_weight * torch.eye(batch_size)), dim=1)
+        weights = torch.zeros_like(cos_sim)
+        weights[:, 1:] = cls.model_args.hard_negative_weight
         weights = weights.to(cls.device)
         
-        cos_sim = cos_sim + weights
-        if has_hard_negative:
-            filter = 1e6 * (torch.cat((torch.ones(batch_size).to(cls.device), has_hard_negative)) - 1)
-            cos_sim = cos_sim + filter
-        
+        cos_sim = cos_sim + weights      
     loss = loss_fct(cos_sim, labels)
 
     # Calculate loss for MLM
@@ -283,7 +301,7 @@ def cl_forward(cls,
         output = (cos_sim,) + outputs[2:]
         return ((loss,) + output) if loss is not None else output
     return SequenceClassifierOutput(
-        loss=loss,  
+        loss=loss,
         logits=cos_sim,
         hidden_states=outputs.hidden_states,
         attentions=outputs.attentions,
@@ -346,7 +364,6 @@ class RobertaForCL(RobertaPreTrainedModel):
         cl_init(self, config)
 
     def forward(self,
-        has_hard_negative=None,
         input_ids=None,
         attention_mask=None,
         token_type_ids=None,
@@ -376,7 +393,6 @@ class RobertaForCL(RobertaPreTrainedModel):
             )
         else:
             return cl_forward(self, self.roberta,
-                has_hard_negative = has_hard_negative,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 token_type_ids=token_type_ids,

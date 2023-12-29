@@ -17,12 +17,13 @@ export OMP_NUM_THREADS=8
 # python train.py \
 python -m torch.distributed.launch --nproc_per_node $NUM_GPU --master_port $PORT_ID train.py \
     --model_name_or_path vinai/phobert-base-v2 \
-    --train_file generated_data/zalo_msmarco_3_hardneg.csv \
-    --output_dir result/zalo_msmarco_3_cls \
+    --train_file generated_data/zalo_1_hardneg.csv \
+    --output_dir result/zalo_msmarco_3_avg_no_inbatch_neg \
     --do_mlm False \
-    --hard_negative_weight 1.1 \
+    --use_in_batch_negative False \
+    --hard_negative_weight 0.7 \
     --num_train_epoch 5 \
-    --per_device_train_batch_size 16 \
+    --per_device_train_batch_size 4 \
     --learning_rate 3e-5 \
     --lr_scheduler_type cosine \
     --warmup_ratio 0.05 \
@@ -33,9 +34,9 @@ python -m torch.distributed.launch --nproc_per_node $NUM_GPU --master_port $PORT
     --eval_steps 7900 \
     --save_steps 7900 \
     --logging_steps 100 \
-    --pooler_type cls \
+    --pooler_type avg \
     --overwrite_output_dir \
-    --temp 0.04 \
+    --temp 0.05 \
     --do_train \
     --do_eval \
     --fp16 \

@@ -66,14 +66,20 @@ if is_datasets_available():
 from transformers.trainer import unwrap_model
 from transformers.optimization import Adafactor, AdamW, get_scheduler
 
-from simcse.tool import SimCSE, get_dataloader
+from simcse.tool import SimCSE
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 
-corpus_256 = pd.read_csv("generated_data/corpus_256.csv", encoding='utf-8')
-law_chunks = list(corpus_256['text'].values)
-reference_ids = corpus_256[['law_id', 'article_id']].values
+corpus = json.load(open("generated_data/zalo_legal/zalo_legal_collections.json", encoding='utf-8'))
+law_chunks = list(corpus.values())
+reference_ids = list(corpus.keys())
+
+with open("generated_data/zalo_legal/eval_data.json", encoding='utf-8') as f:
+    eval_data = json.load(f)
+    
+questions = [question.lower() for question in eval_data['questions']]
+gt_relevant_articles = eval_data['relevant_articles']
 
 logger = logging.get_logger(__name__)
 
@@ -86,25 +92,23 @@ class CLTrainer(Trainer):
         metric_key_prefix: str = "eval",
     ) -> Dict[str, float]:
         
-        with open("generated_data/eval_data.json", encoding='utf-8') as f:
-            eval_data = json.load(f)
-            
-        questions = eval_data['questions']
-        gt_relevant_articles = eval_data['relevant_articles']
-        
         def calculate_accuracy(gt_relevant_articles: list, predicted_relevant_articles: list):
+            assert len(gt_relevant_articles) == len(predicted_relevant_articles)
             total_samples = len(gt_relevant_articles)
             correct_predictions = 0
 
             for i in range(total_samples):
                 gt_articles = gt_relevant_articles[i]
                 predicted_articles = predicted_relevant_articles[i]
-                if len(predicted_articles) > 1:
-                    if all(article in predicted_articles for article in gt_articles):
-                        correct_predictions += 1
-                elif len(predicted_articles) == 1:
-                    if all(article in gt_articles for article in predicted_articles):
-                        correct_predictions += 1
+                # if len(predicted_articles) > 1:
+                #     if all(article in predicted_articles for article in gt_articles):
+                #         correct_predictions += 1
+                # elif len(predicted_articles) == 1:
+                #     if all(article in gt_articles for article in predicted_articles):
+                #         correct_predictions += 1
+                
+                if any(article in gt_articles for article in predicted_articles):
+                    correct_predictions += 1
 
             accuracy = (correct_predictions / total_samples) * 100.0
             return accuracy
@@ -115,12 +119,12 @@ class CLTrainer(Trainer):
             search_results = simcse_object.search(questions, threshold=0.1, top_k=max_k)
             
             predicted_relevant_articles = []
-            for sample in tqdm(search_results, position=0, leave=True):
+            for sample in search_results:
                 predicted_relevant_articles_for_sample = []
                 for article in sample:
                     predicted_relevant_articles_for_sample.append(article[0])
                 predicted_relevant_articles.append(predicted_relevant_articles_for_sample)
-
+                
             for k in top_k:
                 results[f'acc_top_{k}'] = calculate_accuracy(gt_relevant_articles=gt_relevant_articles,
                                                              predicted_relevant_articles=[predicted_relevant_article[:k] for predicted_relevant_article in predicted_relevant_articles])
