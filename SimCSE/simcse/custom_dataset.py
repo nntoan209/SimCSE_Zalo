@@ -82,11 +82,35 @@ class SquadV2Data(SimCSEData):
         return self.corpus 
     
 
+class NewsCorpusData(SimCSEData):
+    def __init__(self, train_triples_file: str, collection_file: str):
+        super().__init__(train_triples_file, collection_file)
+        self.name = "news_corpus"
+        with open(self.train_triples_file) as f:
+            queries = json.load(f)
+        self.queries = queries
+        self.queries_ids = list(queries.keys())
+        self.corpus = json.load(open(self.collection_file, encoding='utf-8'))
+        
+        for qid in self.queries:
+            self.queries[qid]['pos'] = list(self.queries[qid]['pos'])
+            self.queries[qid]['hard_neg'] = list(self.queries[qid]['hard_neg'])
+            # random.shuffle(self.queries[qid]['hard_neg'])
+    
+    def get_train_triples(self):
+        return self.queries
+    
+    def get_corpus(self):
+        return self.corpus 
+
+
 class SimCSEDataset(Dataset):
     def __init__(self, tokenizer,
-                 data_list: List[SimCSEData]):
+                 data_list: List[SimCSEData],
+                 hard_neg_per_sample: int = 1):
         super(SimCSEDataset, self).__init__()
         self.tokenizer = tokenizer
+        self.hard_neg_per_sample = hard_neg_per_sample
         
         data_names_list = [data.name for data in data_list]
         corpus_list = [data.get_corpus() for data in data_list]
@@ -129,19 +153,23 @@ class SimCSEDataset(Dataset):
         pos_id = query['pos'].pop(0)    #Pop positive and add at end
         pos_text = self.corpus[pos_id]
         query['pos'].append(pos_id)
-
-        neg_id = query['hard_neg'].pop(0)    #Pop negative and add at end
-        neg_text = self.corpus[neg_id]
-        query['hard_neg'].append(neg_id)
         
         if query_text is None:
             query_text = " "
         if pos_text is None:
             pos_text = " "
-        if neg_text is None:
-            neg_text = " "
-        
-        sentences = [query_text, pos_text, neg_text]
+            
+        sentences = [query_text, pos_text]
+
+        for _ in range(self.hard_neg_per_sample):
+            neg_id = query['hard_neg'].pop(0)    #Pop negative and add at end
+            neg_text = self.corpus[neg_id]
+            if neg_text is None:
+                neg_text = " "
+            query['hard_neg'].append(neg_id)
+            
+            sentences.append(neg_text)
+          
         
         sent_features = self.tokenizer(
             sentences,
@@ -151,6 +179,7 @@ class SimCSEDataset(Dataset):
         )
                 
         return sent_features 
+        # return sentences
     
     def __len__(self):
         return len(self.queries)

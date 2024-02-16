@@ -16,6 +16,11 @@ export OMP_NUM_THREADS=8
 # Use distributed data parallel
 # If you only want to use one card, uncomment the following line and comment the line with "torch.distributed.launch"
 # python train.py \
+
+    # --news_train_file generated_data/news_corpus/news_corpus_hardneg.json\
+    # --news_collection_file generated_data/news_corpus/news_corpus_collections.json \
+    
+
 python -m torch.distributed.launch --nproc_per_node $NUM_GPU --master_port $PORT_ID train_custom.py \
     --seed $SEED \
     --model_name_or_path vinai/phobert-base-v2 \
@@ -25,21 +30,23 @@ python -m torch.distributed.launch --nproc_per_node $NUM_GPU --master_port $PORT
     --msmarco_collection_file generated_data/msmarco/msmarco_collections.json \
     --squadv2_train_file generated_data/squadv2/squadv2_hardneg.json\
     --squadv2_collection_file generated_data/squadv2/squadv2_collections.json \
-    --output_dir result/simcse_zalo_msmarco_squadv2_avg_0.7 \
+    --hardneg_per_sample 3 \
+    --output_dir result/simcse_zalo_msmarco_squadv2_cls_0.7_3hardneg \
     --do_mlm False \
     --hard_negative_weight 0.7 \
-    --num_train_epoch 10 \
-    --per_device_train_batch_size 32 \
+    --num_train_epoch 8 \
+    --per_device_train_batch_size 16 \
     --learning_rate 3e-5 \
     --lr_scheduler_type cosine \
     --warmup_ratio 0.05 \
     --max_seq_length 256 \
     --evaluation_strategy steps \
+    --save_strategy steps \
     --metric_for_best_model acc_top_1 \
-    --eval_steps 4400 \
-    --save_steps 4400 \
-    --logging_steps 50 \
-    --pooler_type avg \
+    --eval_steps 8800 \
+    --save_steps 8800 \
+    --logging_steps 100 \
+    --pooler_type cls \
     --overwrite_output_dir \
     --temp 0.05 \
     --do_train True \

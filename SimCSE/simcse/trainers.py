@@ -70,16 +70,21 @@ from simcse.tool import SimCSE
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
+from sentence_transformers import util
+
+# corpus = json.load(open("generated_data/zalo_legal/zalo_legal_collections.json", encoding='utf-8'))
+# law_chunks = list(corpus.values())
+# reference_ids = list(corpus.keys())
+
+# with open("generated_data/zalo_legal/eval_data.json", encoding='utf-8') as f:
+#     eval_data = json.load(f)
+    
+# questions = [question.lower() for question in eval_data['questions']]
+# gt_relevant_articles = eval_data['relevant_articles']
 
 corpus = json.load(open("generated_data/zalo_legal/zalo_legal_collections.json", encoding='utf-8'))
-law_chunks = list(corpus.values())
-reference_ids = list(corpus.keys())
-
-with open("generated_data/zalo_legal/eval_data.json", encoding='utf-8') as f:
-    eval_data = json.load(f)
-    
-questions = [question.lower() for question in eval_data['questions']]
-gt_relevant_articles = eval_data['relevant_articles']
+dev_queries = json.load(open("generated_data/zalo_legal/queries_dev_preprocessed.json", encoding='utf-8'))
+dev_rel_docs = json.load(open("generated_data/zalo_legal/qcpairs.json", encoding='utf-8'))
 
 logger = logging.get_logger(__name__)
 
@@ -92,63 +97,212 @@ class CLTrainer(Trainer):
         metric_key_prefix: str = "eval",
     ) -> Dict[str, float]:
         
-        def calculate_accuracy(gt_relevant_articles: list, predicted_relevant_articles: list):
-            assert len(gt_relevant_articles) == len(predicted_relevant_articles)
-            total_samples = len(gt_relevant_articles)
-            correct_predictions = 0
+        # def calculate_accuracy(gt_relevant_articles: list, predicted_relevant_articles: list):
+        #     assert len(gt_relevant_articles) == len(predicted_relevant_articles)
+        #     total_samples = len(gt_relevant_articles)
+        #     correct_predictions = 0
 
-            for i in range(total_samples):
-                gt_articles = gt_relevant_articles[i]
-                predicted_articles = predicted_relevant_articles[i]
-                # if len(predicted_articles) > 1:
-                #     if all(article in predicted_articles for article in gt_articles):
-                #         correct_predictions += 1
-                # elif len(predicted_articles) == 1:
-                #     if all(article in gt_articles for article in predicted_articles):
-                #         correct_predictions += 1
+        #     for i in range(total_samples):
+        #         gt_articles = gt_relevant_articles[i]
+        #         predicted_articles = predicted_relevant_articles[i]
+        #         # if len(predicted_articles) > 1:
+        #         #     if all(article in predicted_articles for article in gt_articles):
+        #         #         correct_predictions += 1
+        #         # elif len(predicted_articles) == 1:
+        #         #     if all(article in gt_articles for article in predicted_articles):
+        #         #         correct_predictions += 1
                 
-                if any(article in gt_articles for article in predicted_articles):
-                    correct_predictions += 1
+        #         if any(article in gt_articles for article in predicted_articles):
+        #             correct_predictions += 1
 
-            accuracy = (correct_predictions / total_samples) * 100.0
-            return accuracy
+        #     accuracy = (correct_predictions / total_samples) * 100.0
+        #     return accuracy
         
-        def calculate_metrics(simcse_object: SimCSE, top_k):
-            max_k = max(top_k)
-            results = {}
-            search_results = simcse_object.search(questions, threshold=0.1, top_k=max_k)
+        # def calculate_metrics(simcse_object: SimCSE, top_k):
+        #     max_k = max(top_k)
+        #     results = {}
+        #     search_results = simcse_object.search(questions, threshold=0.1, top_k=max_k)
             
-            predicted_relevant_articles = []
-            for sample in search_results:
-                predicted_relevant_articles_for_sample = []
-                for article in sample:
-                    predicted_relevant_articles_for_sample.append(article[0])
-                predicted_relevant_articles.append(predicted_relevant_articles_for_sample)
+        #     predicted_relevant_articles = []
+        #     for sample in search_results:
+        #         predicted_relevant_articles_for_sample = []
+        #         for article in sample:
+        #             predicted_relevant_articles_for_sample.append(article[0])
+        #         predicted_relevant_articles.append(predicted_relevant_articles_for_sample)
                 
-            for k in top_k:
-                results[f'acc_top_{k}'] = calculate_accuracy(gt_relevant_articles=gt_relevant_articles,
-                                                             predicted_relevant_articles=[predicted_relevant_article[:k] for predicted_relevant_article in predicted_relevant_articles])
+        #     for k in top_k:
+        #         results[f'acc_top_{k}'] = calculate_accuracy(gt_relevant_articles=gt_relevant_articles,
+        #                                                      predicted_relevant_articles=[predicted_relevant_article[:k] for predicted_relevant_article in predicted_relevant_articles])
 
-            return results
+        #     return results
         
+        # self.model.eval()
+        
+        # simcse_object = SimCSE(model=self.model, tokenizer=self.tokenizer)
+        # simcse_object.build_index(law_chunks, reference_ids)
+        
+        # results = calculate_metrics(simcse_object,
+        #                             top_k=[1, 10, 100])
+        
+        # del simcse_object
+        
+        # acc_top_1 = results['acc_top_1']
+        # acc_top_10 = results['acc_top_10']
+        # acc_top_100 = results['acc_top_100']
+
+        # metrics = {"eval_acc_top_1": acc_top_1,
+        #            "eval_acc_top_10": acc_top_10,
+        #            "eval_acc_top_100": acc_top_100}
+        
+        # self.log(metrics)
+        # return metrics
+        
+        def calculate_metrics(only_pidqids_results, dev_rel_docs, dev_queries,  mrr_at_k, accuracy_at_k, precision_recall_at_k, map_at_k):
+            # Init score computation values
+            num_hits_at_k = {k: 0 for k in accuracy_at_k}
+            precisions_at_k = {k: [] for k in precision_recall_at_k}
+            recall_at_k = {k: [] for k in precision_recall_at_k}
+            MRR = {k: 0 for k in mrr_at_k}
+            AveP_at_k = {k: [] for k in map_at_k}
+
+            for pid in only_pidqids_results.keys(): #qid : [pid1, pid2, pid3, ...pid 4]
+                                                    #label: qid: [positive pid1, pid2, ..]
+                top_hits = only_pidqids_results[pid]
+                query_relevant_docs = [dev_rel_docs[pid]]  # only one right now
+
+                # Accuracy @k
+                for k_val in accuracy_at_k:
+                    for hit in top_hits[0:k_val]:
+                        if hit in query_relevant_docs:
+                            num_hits_at_k[k_val] += 1
+                            break
+
+                # Precision and Recall@k
+                for k_val in precision_recall_at_k:
+                    num_correct = 0
+                    for hit in list(dict.fromkeys(top_hits[0:k_val])):
+                        if hit in query_relevant_docs:
+                            num_correct += 1
+
+                    precisions_at_k[k_val].append(num_correct / k_val)
+                    recall_at_k[k_val].append(num_correct / len(query_relevant_docs))
+
+                # MRR@k
+                for k_val in mrr_at_k:
+                    for rank, hit in enumerate(list(dict.fromkeys(top_hits[0:k_val]))):
+                        if hit in query_relevant_docs:
+                            MRR[k_val] += 1.0 / (rank + 1)
+                            break
+
+                # MAP@k
+                for k_val in map_at_k:
+                    num_correct = 0
+                    sum_precisions = 0
+
+                    for rank, hit in enumerate(list(dict.fromkeys(top_hits[0:k_val]))):
+                        if hit in query_relevant_docs:
+                            num_correct += 1
+                            sum_precisions += num_correct / (rank + 1)
+
+                    avg_precision = sum_precisions / min(k_val, len(query_relevant_docs))
+                    AveP_at_k[k_val].append(avg_precision)
+
+
+            ## Compute averages
+            for k in num_hits_at_k:
+                num_hits_at_k[k] /= len(dev_queries)
+
+            for k in precisions_at_k:
+                precisions_at_k[k] = np.mean(precisions_at_k[k])
+
+            for k in recall_at_k:
+                recall_at_k[k] = np.mean(recall_at_k[k])
+
+            for k in MRR:
+                MRR[k] /= len(dev_queries)
+
+            for k in AveP_at_k:
+                AveP_at_k[k] = np.mean(AveP_at_k[k])
+
+
+            ## For logging
+            scores = {'accuracy@k': num_hits_at_k, 'precision@k': precisions_at_k, 'recall@k': recall_at_k, 'mrr@k': MRR, 'map@k': AveP_at_k}
+
+            # for k in scores['accuracy@k']:
+            #     logger.info("Accuracy@{}: {:.2f}%".format(k, scores['accuracy@k'][k]*100))
+
+            # for k in scores['precision@k']:
+            #     logger.info("Precision@{}: {:.2f}%".format(k, scores['precision@k'][k]*100))
+
+            # for k in scores['recall@k']:
+            #     logger.info("Recall@{}: {:.2f}%".format(k, scores['recall@k'][k]*100))
+
+            # for k in scores['mrr@k']:
+            #     logger.info("MRR@{}: {:.4f}".format(k, scores['mrr@k'][k]))
+
+            # for k in scores['map@k']:
+            #     logger.info("MAP@{}: {:.4f}".format(k, scores['map@k'][k])) 
+            
+            final_result = {}
+            for k in scores['accuracy@k']:
+                final_result[f'eval_acc_top_{k}'] = scores['accuracy@k'][k]*100
+            for k in scores['precision@k']:
+                final_result[f'eval_precision_top_{k}'] = scores['precision@k'][k]*100
+            for k in scores['recall@k']:
+                final_result[f'eval_recall_top_{k}'] = scores['recall@k'][k]*100
+            for k in scores['mrr@k']:
+                final_result[f'eval_mrr_top_{k}'] = scores['mrr@k'][k]
+            for k in scores['map@k']:
+                final_result[f'eval_map_top_{k}'] = scores['map@k'][k]
+                
+            return final_result
+        
+        logger.info("New evaluate code")
         self.model.eval()
-        
         simcse_object = SimCSE(model=self.model, tokenizer=self.tokenizer)
-        simcse_object.build_index(law_chunks, reference_ids)
         
-        results = calculate_metrics(simcse_object,
-                                    top_k=[1, 10, 100])
-        
-        del simcse_object
-        
-        acc_top_1 = results['acc_top_1']
-        acc_top_10 = results['acc_top_10']
-        acc_top_100 = results['acc_top_100']
+        logger.info("Chunking Sentence Embedding ...")
+        sentences_embedding = simcse_object.encode(sentence=list(corpus.values()), device='cuda', return_numpy=True)
 
-        metrics = {"eval_acc_top_1": acc_top_1,
-                   "eval_acc_top_10": acc_top_10,
-                   "eval_acc_top_100": acc_top_100}
+        logger.info("Dev Queries Embedding ...")
+        queries_dev_embedding = simcse_object.encode(list(dev_queries.values()), device='cuda', return_numpy=True)
+
+        logger.info("Semantic Search ...")
+        results_semantic_search = util.semantic_search(queries_dev_embedding, sentences_embedding, top_k=100) #chunk
         
+        ### Convert results
+        qids = list(dev_queries.keys())
+        pids = list(corpus.keys())
+
+        converted_results = {}
+        for idx, result in enumerate(results_semantic_search):
+                for answer in result:
+                    answer['corpus_id'] = pids[answer['corpus_id']]
+                converted_results[qids[idx]] = result
+
+        ### Get passage from chunk results 
+        only_pidqids_results = {}
+        for qid, result in converted_results.items():
+            only_pidqids_results[qid] = [" ".join(answer['corpus_id'].split()[:-1]).strip() for answer in result]
+        
+        only_pidchunkqids_results = {}
+        for qid, result in converted_results.items():
+            only_pidchunkqids_results[qid] = [" ".join(answer['corpus_id'].split()).strip() for answer in result]
+
+        ### Compute metrics  parameters
+        mrr_at_k = [5, 10, 100]
+        accuracy_at_k = [1, 10, 100]
+        precision_recall_at_k = [1, 10, 100]
+        map_at_k = [5, 10, 100]
+
+        logger.info("Evaluating the Bi-Encoder ...")
+        metrics = calculate_metrics(only_pidqids_results=only_pidqids_results,
+                                    dev_rel_docs=dev_rel_docs,
+                                    dev_queries=dev_queries,
+                                    mrr_at_k=mrr_at_k,
+                                    accuracy_at_k=accuracy_at_k,
+                                    precision_recall_at_k=precision_recall_at_k,
+                                    map_at_k=map_at_k) 
         self.log(metrics)
         return metrics
         
@@ -502,8 +656,7 @@ class CLTrainer(Trainer):
                             torch.nn.utils.clip_grad_norm_(
                                 amp.master_params(self.optimizer) if self.use_apex else model.parameters(),
                                 self.args.max_grad_norm,
-                            )
-                            
+                            )                     
 
                     # Optimizer step
                     if is_torch_tpu_available():

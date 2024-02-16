@@ -21,13 +21,13 @@ from transformers.trainer_utils import is_main_process
 from transformers.file_utils import cached_property, is_torch_tpu_available, torch_required
 from simcse.models import RobertaForCL
 from simcse.trainers import CLTrainer
-from simcse.custom_dataset import SimCSEDataset, ZaloData, MSMARCOData, SquadV2Data
+from simcse.custom_dataset import SimCSEDataset, ZaloData, MSMARCOData, NewsCorpusData, SquadV2Data
 
 logger = logging.getLogger(__name__)
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
-os.environ["WANDB_DISABLE"] = "true"
+os.environ["WANDB_DISABLE"] = "false"
 os.environ["WANDB_PROJECT"] = "simcse-zalo-msmarco-squadv2"
 
 @dataclass
@@ -170,6 +170,20 @@ class DataTrainingArguments:
     squadv2_collection_file: Optional[str] = field(
         default=None, 
         metadata={"help": "The squadv2 training collection file"}
+    )
+    news_train_file: Optional[str] = field(
+        default=None, 
+        metadata={"help": "The news training data file"}
+    )
+    news_collection_file: Optional[str] = field(
+        default=None, 
+        metadata={"help": "The news training collection file"}
+    )
+    hardneg_per_sample: Optional[int] = field(
+        default=1,
+        metadata={
+            "help": "Number of hard negatives for one sample"
+        },
     )
     max_seq_length: Optional[int] = field(
         default=32,
@@ -341,7 +355,9 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        if ('roberta' in model_args.model_name_or_path) or ('phobert' in model_args.model_name_or_path) or ('bkai' in model_args.model_name_or_path):
+        if ('roberta' in model_args.model_name_or_path) or ('phobert' in model_args.model_name_or_path) \
+                                                        or ('bkai' in model_args.model_name_or_path) \
+                                                        or ('result' in model_args.model_name_or_path):
             model = RobertaForCL.from_pretrained(
                 model_args.model_name_or_path,
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -369,27 +385,34 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    logger.info("Loading dataset...")
-    
-    data_list = []
-    if (data_args.zalo_train_file is not None) and (data_args.zalo_collection_file is not None):
-        zalo_data = ZaloData(train_triples_file=data_args.zalo_train_file, collection_file=data_args.zalo_collection_file)     
-        data_list.append(zalo_data)
-        
-    if (data_args.msmarco_train_file is not None) and (data_args.msmarco_collection_file is not None):
-        msmarco_data = MSMARCOData(train_triples_file=data_args.msmarco_train_file, collection_file=data_args.msmarco_collection_file)
-        data_list.append(msmarco_data)
-        
-    if (data_args.squadv2_train_file is not None) and (data_args.squadv2_collection_file is not None):
-        squadv2_data = SquadV2Data(train_triples_file=data_args.squadv2_train_file, collection_file=data_args.squadv2_collection_file)
-        data_list.append(squadv2_data)
-    datasets = SimCSEDataset(tokenizer=tokenizer,
-                             data_list=data_list)
-                           
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
-
     if training_args.do_train:
+        logger.info("Loading dataset...")
+        
+        data_list = []
+        if (data_args.zalo_train_file is not None) and (data_args.zalo_collection_file is not None):
+            zalo_data = ZaloData(train_triples_file=data_args.zalo_train_file, collection_file=data_args.zalo_collection_file)     
+            data_list.append(zalo_data)
+            
+        if (data_args.msmarco_train_file is not None) and (data_args.msmarco_collection_file is not None):
+            msmarco_data = MSMARCOData(train_triples_file=data_args.msmarco_train_file, collection_file=data_args.msmarco_collection_file)
+            data_list.append(msmarco_data)
+            
+        if (data_args.squadv2_train_file is not None) and (data_args.squadv2_collection_file is not None):
+            squadv2_data = SquadV2Data(train_triples_file=data_args.squadv2_train_file, collection_file=data_args.squadv2_collection_file)
+            data_list.append(squadv2_data)
+            
+        if (data_args.news_train_file is not None) and (data_args.news_collection_file is not None):
+            news_data = NewsCorpusData(train_triples_file=data_args.news_train_file, collection_file=data_args.news_collection_file)
+            data_list.append(news_data)
+            
+        datasets = SimCSEDataset(tokenizer=tokenizer,
+                                data_list=data_list,
+                                hard_neg_per_sample=data_args.hardneg_per_sample)
+                            
+        # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
+        # https://huggingface.co/docs/datasets/loading_datasets.html.
+
+        
         train_dataset = datasets
 
     # Data collator
