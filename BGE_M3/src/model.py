@@ -3,7 +3,7 @@ import torch.distributed as dist
 from torch import nn, Tensor
 from typing import List, Tuple, Dict, Any, Optional
 
-class BGEM3Model(nn.Modelue):
+class BGEM3Model(nn.Module):
     pass
 
 
