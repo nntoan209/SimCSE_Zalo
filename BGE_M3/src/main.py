@@ -84,7 +84,7 @@ def main():
     logger.info('Config: %s', config)
 
     model = BGEM3Model(model_name=model_args.model_name_or_path,
-                       normlized=training_args.normlized,
+                       normalized=training_args.normalized,
                        pooling_method=training_args.sentence_pooling_method,
                        negative_cross_device=training_args.negatives_cross_device,
                        temperature=training_args.temperature,
