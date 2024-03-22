@@ -1,9 +1,12 @@
 transformers==4.16.1
+sentence-transformers
 scipy
 datasets
+accelerate>=0.20.1
 pandas
 scikit-learn
 prettytable
 gradio
-torch
 setuptools
+sentencepiece
+deepspeed
