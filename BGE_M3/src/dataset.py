@@ -106,7 +106,7 @@ class LawsTrainDataset(Dataset):
         self.refresh_epoch()
     
     def print_batch_size(self, batch_size: int, train_group_size: int):
-        length_list = ['0-500', '500-1000', '1000-2000', '2000-3000', '3000-4000', '4000-5000', '5000-6000', '6000-7000', '7000-inf']
+        length_list = ['0-512', '512-1024', '1024-2048', '2048-4096', '4096-inf']
         batch_size_dict = {
             k: self.get_file_batch_size(f"len-{k}.jsonl", batch_size, train_group_size) for k in length_list
         }
@@ -140,6 +140,20 @@ class LawsTrainDataset(Dataset):
                 return 10
             elif 'len-7000-inf.jsonl' in file:
                 return 8
+            else:
+                return batch_size
+        elif train_group_size == 2:
+            # 40GB
+            if 'len-0-512.jsonl' in file:
+                return 64
+            elif 'len-512-1024.jsonl' in file:
+                return 32
+            elif 'len-1024-2048.jsonl' in file:
+                return 16
+            elif 'len-2048-4096.jsonl' in file:
+                return 8
+            elif 'len-4096-inf.jsonl' in file:
+                return 4
             else:
                 return batch_size
         elif train_group_size == 1:
