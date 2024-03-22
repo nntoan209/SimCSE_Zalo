@@ -1,12 +1,11 @@
 #!/bin/bash
 
-python split_data_by_length.py \
-    --input_path train_data \
-    --output_dir train_data_split \
-    --cache_dir .cache \
+python split_data.py \
+    --input_path ../data/final/train/merged_data_train_minedHN_fulltext.jsonl \
+    --output_dir ../data/final/train/splitted_data \
+    --cache_dir ../data/cache \
     --log_name .split_log \
-    --length_list 0 500 1000 2000 3000 4000 5000 6000 7000 \
+    --length_list 0 512 1024 2048 4096 \
     --model_name_or_path BAAI/bge-m3 \
     --num_proc 16 \
-    --overwrite False \
     "$@"
