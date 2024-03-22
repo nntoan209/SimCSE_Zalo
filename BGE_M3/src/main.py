@@ -85,8 +85,8 @@ def main():
 
     model = BGEM3Model(model_name=model_args.model_name_or_path,
                        normlized=training_args.normlized,
-                       sentence_pooling_method=training_args.sentence_pooling_method,
-                       negatives_cross_device=training_args.negatives_cross_device,
+                       pooling_method=training_args.sentence_pooling_method,
+                       negative_cross_device=training_args.negatives_cross_device,
                        temperature=training_args.temperature,
                        enable_sub_batch=training_args.enable_sub_batch,
                        unified_finetuning=training_args.unified_finetuning,
