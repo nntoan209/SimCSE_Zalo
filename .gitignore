@@ -5,6 +5,9 @@ legal_corpus.json
 *.ipynb
 msmarco_vietnamese/
 squadv2/
+data/
+saved_models/
+results.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
