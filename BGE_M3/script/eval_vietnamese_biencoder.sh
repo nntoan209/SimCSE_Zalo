@@ -2,7 +2,7 @@
 
 export CUDA_VISIBLE_DEVICES="0"
 
-python eval/eval_vietnamese_biencoder.py \
+python3 BGE_M3/eval/eval_vietnamese_biencoder.py \
     --query_batch_size 32 \
     --passage_batch_size 32 \
     --corpus_file data/final/corpus/merged_dedup_chunked_corpus_indexed.json \

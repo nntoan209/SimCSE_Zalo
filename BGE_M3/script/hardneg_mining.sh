@@ -4,7 +4,7 @@ export HF_DATASETS_OFFLINE=0
 export TRANSFORMERS_OFFLINE=0
 export CUDA_VISIBLE_DEVICES="0,1"
 
-python -m FlagEmbedding.baai_general_embedding.finetune.hn_mine \
+python3 -m BGE_M3.src.hn_mine \
     --model_name_or_path BAAI/bge-m3 \
     --input_file data/final/merged_data_train.jsonl \
     --corpus_file data/final/merged_dedup_corpus_indexed.json \

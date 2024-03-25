@@ -2,7 +2,7 @@
 
 # export CUDA_VISIBLE_DEVICES="6,7"
 
-python eval/eval_bgem3_dense_rerank_colbert.py \
+python3 BGE_M3/eval/eval_bgem3_dense_rerank_colbert.py \
     --model_savedir BAAI/bge-m3 \
     --query_max_length 128 \
     --query_batch_size 512 \

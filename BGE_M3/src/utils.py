@@ -4,7 +4,7 @@ from typing import List, Union, Dict, Tuple, cast
 from collections import defaultdict
 import numpy as np
 from tqdm import tqdm
-from BGE_M3.model import BGEM3ForInference
+from BGE_M3.src.model import BGEM3ModelForInference
 
 
 class FlagModel:
@@ -134,7 +134,7 @@ class BGEM3FlagModel:
             device: str = None
     ) -> None:
 
-        self.model = BGEM3ForInference(
+        self.model = BGEM3ModelForInference(
             model_name=model_name_or_path,
             normlized=normalize_embeddings,
             sentence_pooling_method=pooling_method,

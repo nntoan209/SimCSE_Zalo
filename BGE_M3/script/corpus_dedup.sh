@@ -1,6 +1,6 @@
 #!/bin/bash
 
-python -m text_dedup.minhash \
+python3 -m text_dedup.minhash \
   --path "data/merged" \
   --split "train" \
   --cache_dir "./cache" \

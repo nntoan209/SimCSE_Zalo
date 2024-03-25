@@ -2,7 +2,7 @@
 
 # export CUDA_VISIBLE_DEVICES="6,7"
 
-python eval/eval_vnbiencoder_rerank_vncrossencoder.py \
+python3 BGE_M3/eval/eval_vnbiencoder_rerank_vncrossencoder.py \
     --biencoder_path bkai-foundation-models/vietnamese-bi-encoder\
     --crossencoder_path bkai-foundation-models/vietnamese-bi-encoder \
     --query_max_length 128 \

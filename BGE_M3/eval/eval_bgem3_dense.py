@@ -1,4 +1,4 @@
-from FlagEmbedding import BGEM3FlagModel
+from BGE_M3.src.utils import BGEM3FlagModel
 import numpy as np
 import os
 import json

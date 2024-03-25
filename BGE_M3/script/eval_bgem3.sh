@@ -2,7 +2,7 @@
 
 # export CUDA_VISIBLE_DEVICES="7"
 
-python eval/eval_bgem3_dense.py \
+python3 BGE_M3/eval/eval_bgem3_dense.py \
     --model_savedir saved_models/bgem3_plen2048_bs8_lr2e5_ga8 \
     --query_max_length 128 \
     --query_batch_size 256 \
