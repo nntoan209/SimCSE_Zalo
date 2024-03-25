@@ -3,6 +3,7 @@ import numpy as np
 import os
 import json
 import torch
+from tqdm import tqdm
 from sentence_transformers import util
 from argparse import ArgumentParser
 
@@ -15,6 +16,7 @@ parser.add_argument("--passage_batch_size", type=int, default=2, help='passage b
 parser.add_argument("--corpus_file", type=str, help="path to the corpus file")
 parser.add_argument("--dev_queries_file", type=str, help="path to the dev queries file")
 parser.add_argument("--dev_rel_docs_file", type=str, help="path to the dev relevant documents file")
+parser.add_argument("--colbert_rerank", action='store_true', help="rerank with colbert")
 parser.add_argument("--save_dir", type=str)
 
 args = parser.parse_args()
@@ -128,17 +130,19 @@ if __name__ == "__main__":
         print("Documents Embedding ...")
         sentences_embedding = model.encode(sentences=list(corpus.values()),
                                         batch_size=args.passage_batch_size,
-                                        max_length=args.passage_max_length)['dense_vecs']
-        sentences_embedding = torch.from_numpy(sentences_embedding).to(torch.float32)
+                                        max_length=args.passage_max_length,
+                                        return_colbert_vecs=args.colbert_rerank)
+        sentences_embedding_dense = torch.from_numpy(sentences_embedding['dense_vecs']).to(torch.float32)
 
         print("Dev Queries Embedding ...")
         queries_dev_embedding = model.encode(sentences=list(dev_queries.values()),
                                             batch_size=args.query_batch_size,
-                                            max_length=args.query_max_length)['dense_vecs']
-        queries_dev_embedding = torch.from_numpy(queries_dev_embedding).to(torch.float32)
+                                            max_length=args.query_max_length,
+                                            return_colbert_vecs=args.colbert_rerank)
+        queries_dev_embedding_dense = torch.from_numpy(queries_dev_embedding['dense_vecs']).to(torch.float32)
 
         print("Semantic Search ...")
-        results_semantic_search = util.semantic_search(queries_dev_embedding, sentences_embedding, top_k=100) #chunk
+        results_semantic_search = util.semantic_search(queries_dev_embedding_dense, sentences_embedding_dense, top_k=100) #chunk
 
         ### Convert results
         qids = list(dev_queries.keys())
@@ -170,44 +174,47 @@ if __name__ == "__main__":
                                     map_at_k=map_at_k) 
 
         with open(args.save_dir, "a") as f:
-            f.write(f"{model_path} Colbert rerank \n\tBefore rerank:\n")
+            f.write(f"{model_path} {args.colbert_reank * 'Colbert rerank \n\tBefore rerank:'}\n")
             for key, value in metrics.items():
-                f.write(f"\t\t{key}: {value}\n")
+                f.write(f"{'\t' * (1 + args.colbert_rerank)}{key}: {value}\n")
 
         # rerank with Colbert
-        sentence_pairs = []
-        for qid in only_pidqids_results.keys():
-            for pid in only_pidqids_results[qid]:
-                sentence_pairs.append([dev_queries[qid], corpus[pid]])
+        if args.colbert_rerank:
 
-        colbert_scores = model.compute_colbert_score(sentence_pairs=sentence_pairs,
-                                                     batch_size=4,
-                                                     max_query_length=args.query_max_length,
-                                                     max_passage_length=args.passage_max_length) # [n_queries * 100]
-        rerank_only_pidqids_results = {}
-        for idx, qid in enumerate(only_pidqids_results.keys()):
-            colbert_scores_for_qid = colbert_scores[100*idx:100*(idx+1)]
-            pids_with_colbert_scores_for_qid = list(zip(only_pidqids_results[qid], colbert_scores_for_qid))
+            sentences_embedding_colbert = sentences_embedding['colbert_vecs'] # list of colbert vecs
+            queries_dev_embedding_colbert = queries_dev_embedding['colbert_vecs'] # list of colbert vecs
 
-            rerank_pids_with_colbert_scores_for_qid = sorted(pids_with_colbert_scores_for_qid, key=lambda x: x[1], reverse=True)
+            rerank_only_pidqids_results = {}
+            colbert_embedded_corpus = {k: v for k,v in zip(pids, sentences_embedding_colbert)}
+            colbert_embedded_queries = {k: v for k,v in zip(qids, queries_dev_embedding_colbert)}
 
-            rerank_only_pidqids_results[qid] = [answer[0] for answer in rerank_pids_with_colbert_scores_for_qid]
+            for qid in tqdm(only_pidqids_results.keys(), desc="Rerank with Colbert",
+                            disable=len(only_pidqids_results.keys()) < 5):
+                
+                colbert_scores_for_qid = [model.colbert_score(q_reps=colbert_embedded_queries[qid], p_reps=colbert_embedded_corpus[pid]) \
+                                          for pid in only_pidqids_results[qid]]
+                
+                pids_with_colbert_scores_for_qid = list(zip(only_pidqids_results[qid], colbert_scores_for_qid))
 
-        ### Compute rerank metrics  parameters
-        mrr_at_k = [5, 10, 100]
-        accuracy_at_k = [1, 5, 10, 100]
-        precision_recall_at_k = [1, 5, 10, 100]
-        map_at_k = [5, 10, 100]
+                rerank_pids_with_colbert_scores_for_qid = sorted(pids_with_colbert_scores_for_qid, key=lambda x: x[1], reverse=True)
+                
+                rerank_only_pidqids_results[qid] = [answer[0] for answer in rerank_pids_with_colbert_scores_for_qid]
 
-        rerank_metrics = calculate_metrics(only_pidqids_results=rerank_only_pidqids_results,
-                                    dev_rel_docs=dev_rel_docs,
-                                    dev_queries=dev_queries,
-                                    mrr_at_k=mrr_at_k,
-                                    accuracy_at_k=accuracy_at_k,
-                                    precision_recall_at_k=precision_recall_at_k,
-                                    map_at_k=map_at_k) 
+            ### Compute rerank metrics  parameters
+            mrr_at_k = [5, 10, 100]
+            accuracy_at_k = [1, 5, 10, 100]
+            precision_recall_at_k = [1, 5, 10, 100]
+            map_at_k = [5, 10, 100]
 
-        with open(args.save_dir, "a") as f:
-            f.write(f"\tAfter rerank:\n")
-            for key, value in rerank_metrics.items():
-                f.write(f"\t\t{key}: {value}\n")
+            rerank_metrics = calculate_metrics(only_pidqids_results=rerank_only_pidqids_results,
+                                        dev_rel_docs=dev_rel_docs,
+                                        dev_queries=dev_queries,
+                                        mrr_at_k=mrr_at_k,
+                                        accuracy_at_k=accuracy_at_k,
+                                        precision_recall_at_k=precision_recall_at_k,
+                                        map_at_k=map_at_k) 
+
+            with open(args.save_dir, "a") as f:
+                f.write(f"\tAfter rerank:\n")
+                for key, value in rerank_metrics.items():
+                    f.write(f"\t\t{key}: {value}\n")
