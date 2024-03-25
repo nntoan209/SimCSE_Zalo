@@ -56,7 +56,7 @@ class BGEM3Model(nn.Module):
         self.use_self_distill = use_self_distill
         self.self_distill_start_step = self_distill_start_step
         self.negative_cross_device = negative_cross_device
-        if self.negatives_cross_device:
+        if self.negative_cross_device:
             if not dist.is_initialized():
                 raise ValueError('Distributed training has not been initialized for representation all gather.')
 
@@ -97,38 +97,36 @@ class BGEM3Model(nn.Module):
                 'The parameters of colbert_linear and sparse linear is new initialize. Make sure the model is loaded for training, not inferencing')
     
     def compute_sub_batch_size(self, features):
-        mapping = [(8192, 1), (4096, 2), (2048, 4), (1024, 8), (512, 16), (0, 32)]
+        mapping = [(8192, 1), (4096, 1), (2048, 2), (1024, 4), (512, 8), (0, 16)]
         cur_l = features['input_ids'].size(-1)
         for l, b in mapping:
             if cur_l >= l:
                 return b
     
-    def dense_embedding(self, last_hidden_state, mask):
+    def dense_embedding(self, hidden_state, mask):
         if self.pooling_method == 'cls':
-            return last_hidden_state[:, 0]
+            return hidden_state[:, 0]
         elif self.pooling_method == 'mean':
-            s = torch.sum(last_hidden_state * mask.unsqueeze(-1).float(), dim=1)
+            s = torch.sum(hidden_state * mask.unsqueeze(-1).float(), dim=1)
             d = mask.sum(axis=1, keepdim=True).float()
             return s / d
         
-    def sparse_embedding(self, last_hidden_state, input_ids, return_embedding: bool = True):
-        token_weights = torch.relu(self.sparse_linear(last_hidden_state))
+    def sparse_embedding(self, hidden_state, input_ids, return_embedding: bool = True):
+        token_weights = torch.relu(self.sparse_linear(hidden_state))
         if not return_embedding:
             return token_weights
-        
+
         sparse_embedding = torch.zeros(input_ids.size(0), input_ids.size(1), self.vocab_size,
                                        dtype=token_weights.dtype,
                                        device=token_weights.device)
         sparse_embedding = torch.scatter(sparse_embedding, dim=-1, index=input_ids.unsqueeze(-1), src=token_weights)
 
-        ununsed_token = [self.tokenizer.cls_token_id,
+        unused_tokens = [self.tokenizer.cls_token_id,
                          self.tokenizer.eos_token_id,
                          self.tokenizer.pad_token_id,
                          self.tokenizer.unk_token_id]
-        
-        sparse_embedding = torch.max(sparse_embedding, dim=-1).values
-        sparse_embedding[:, ununsed_token] *= 0.0
-
+        sparse_embedding = torch.max(sparse_embedding, dim=1).values
+        sparse_embedding[:, unused_tokens] *= 0.
         return sparse_embedding
 
     def colbert_embedding(self, last_hidden_state, mask):
@@ -146,7 +144,7 @@ class BGEM3Model(nn.Module):
         scores = scores.view(q_reps.size(0), -1)
         return scores
     
-    def colbert_score(self, q_reps, p_reps, q_mask: Tensor):
+    def colbert_score(self, q_reps, p_reps, q_mask: torch.Tensor):
         token_scores = torch.einsum('qin,pjn->qipj', q_reps, p_reps)
         scores, _ = token_scores.max(-1)
         scores = scores.sum(1) / q_mask[:, 1:].sum(-1, keepdim=True)
@@ -178,50 +176,46 @@ class BGEM3Model(nn.Module):
 
             for i in range(0, len(features['attention_mask']), sub_batch_size):
                 end_inx = min(i + sub_batch_size, len(features['attention_mask']))
-                sub_features = {k: v[i:end_inx] for k, v in features.items()}
+                sub_features = {}
+                for k, v in features.items():
+                    sub_features[k] = v[i:end_inx]
 
                 dense_vecs, sparse_vecs, colbert_vecs = self._encode(sub_features)
                 all_dense_vecs.append(dense_vecs)
                 all_sparse_vecs.append(sparse_vecs)
                 all_colbert_vecs.append(colbert_vecs)
-            
-            dense_vecs = torch.cat(all_dense_vecs, dim=0)
+
+            dense_vecs = torch.cat(all_dense_vecs, 0)
             if self.unified_finetuning:
-                sparse_vecs = torch.cat(all_sparse_vecs, dim=0)
-                colbert_vecs = torch.cat(all_colbert_vecs, dim=0)
-        
+                sparse_vecs = torch.cat(all_sparse_vecs, 0)
+                colbert_vecs = torch.cat(all_colbert_vecs, 0)
         else:
             dense_vecs, sparse_vecs, colbert_vecs = self._encode(features)
-        
+
         if self.unified_finetuning:
             return dense_vecs.contiguous(), sparse_vecs.contiguous(), colbert_vecs.contiguous()
         else:
             return dense_vecs.contiguous(), None, None
         
-    def forward(self,
-                query: Dict[str, Tensor] = None,
-                passage: Dict[str, Tensor] = None,
-                teacher_scores: Tensor = None,
-                ):
+    def forward(self, query: Dict[str, Tensor] = None, passage: Dict[str, Tensor] = None, teacher_scores: Tensor = None,
+                bi_directions=None):
         if self.enable_sub_batch:
-            # Divide into sub-batches
             q_dense_vecs, q_sparse_vecs, q_colbert_vecs = self.encode(query,
                                                                       sub_batch_size=self.compute_sub_batch_size(query))
             p_dense_vecs, p_sparse_vecs, p_colbert_vecs = self.encode(passage,
                                                                       sub_batch_size=self.compute_sub_batch_size(passage))
         else:
-            # No sub-batch
             q_dense_vecs, q_sparse_vecs, q_colbert_vecs = self.encode(query)
             p_dense_vecs, p_sparse_vecs, p_colbert_vecs = self.encode(passage)
-        
+
         if self.training:
-            # Use soft-label knowledge distillation
             if teacher_scores is not None:
-                teacher_targets = F.softmax(teacher_scores, dim=-1)
+                # Use soft-label knowledge distillation
+                teacher_targets = F.softmax(teacher_scores, dim=-1)  # B N
                 group_size = p_sparse_vecs.size(0) // q_sparse_vecs.size(0)
 
                 # dense loss
-                dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)
+                dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)  # B, B * N
                 if self.negative_cross_device:
                     cross_q_dense_vecs = self._dist_gather_tensor(q_dense_vecs)
                     cross_p_dense_vecs = self._dist_gather_tensor(p_dense_vecs)
@@ -231,54 +225,54 @@ class BGEM3Model(nn.Module):
                     loss = self.distill_loss(cross_teacher_targets, cross_dense_scores, group_size=group_size)
                 else:
                     loss = self.distill_loss(teacher_targets, dense_scores, group_size=group_size)
-                
-                # unified finetuning
+
                 if self.unified_finetuning:
-                    # sparse loss and colbert loss
-                    sparse_scores = self.sparse_score(q_sparse_vecs, p_sparse_vecs)
+                    # sparse and colbert loss
+                    sparse_scores = self.sparse_score(q_sparse_vecs, p_sparse_vecs)  # B, B * N
                     sparse_loss = self.distill_loss(teacher_targets, sparse_scores, group_size=group_size)
 
-                    colbert_scores = self.colbert_score(q_colbert_vecs, p_colbert_vecs, query['attention_mask'])
+                    colbert_scores = self.colbert_score(q_colbert_vecs, p_colbert_vecs,
+                                                        q_mask=query['attention_mask'])  # B, B * N
                     colbert_loss = self.distill_loss(teacher_targets, colbert_scores, group_size=group_size)
 
                     ensemble_loss = self.distill_loss(teacher_targets,
                                                       dense_scores + 0.3 * sparse_scores + colbert_scores,
                                                       group_size=group_size)
-
                     loss = (loss + ensemble_loss + 0.1 * sparse_loss + colbert_loss) / 4
 
-            # Teacher scores are not provided
+
             else:
                 idxs = torch.arange(q_dense_vecs.size(0), device=q_dense_vecs.device, dtype=torch.long)
                 targets = idxs * (p_sparse_vecs.size(0) // q_sparse_vecs.size(0))
 
                 # dense loss
-                dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)
+                dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)  # B, B * N
                 if self.negative_cross_device:
                     cross_q_dense_vecs = self._dist_gather_tensor(q_dense_vecs)
                     cross_p_dense_vecs = self._dist_gather_tensor(p_dense_vecs)
 
                     cross_idxs = torch.arange(cross_q_dense_vecs.size(0), device=cross_q_dense_vecs.device, dtype=torch.long)
+
                     cross_targets = cross_idxs * (cross_p_dense_vecs.size(0) // cross_q_dense_vecs.size(0))
                     cross_dense_scores = self.dense_score(cross_q_dense_vecs, cross_p_dense_vecs)
 
                     loss = self.compute_loss(cross_dense_scores, cross_targets)
                 else:
                     loss = self.compute_loss(dense_scores, targets)
-                
-                # unified finetuning
+
                 if self.unified_finetuning:
-                    # sparse loss and colbert loss
+                    # sparse and colbert loss
                     sparse_scores = self.sparse_score(q_sparse_vecs, p_sparse_vecs)
                     sparse_loss = self.compute_loss(sparse_scores, targets)
 
-                    colbert_scores = self.colbert_score(q_colbert_vecs, p_colbert_vecs, query['attention_mask'])
+                    colbert_scores = self.colbert_score(q_colbert_vecs, p_colbert_vecs,
+                                                        q_mask=query['attention_mask'])
                     colbert_loss = self.compute_loss(colbert_scores, targets)
 
                     ensemble_loss = self.compute_loss(dense_scores + 0.3 * sparse_scores + colbert_scores, targets)
                     loss = (loss + ensemble_loss + 0.1 * sparse_loss + colbert_loss) / 4
         
-            if self.use_self_distill and self.step >= self.self_distill_start_step and self.unified_finetuning:
+            if self.use_self_distill and self.step > self.self_distill_start_step and self.unified_finetuning:
                 ensemble_scores = dense_scores + 0.3 * sparse_scores + colbert_scores
                 teacher_targets = torch.softmax(ensemble_scores.detach(), dim=-1)
 
@@ -299,10 +293,11 @@ class BGEM3Model(nn.Module):
                 loss = loss / 2
             
             self.step += 1
+
         # Inference
         else:
             loss = None
-        
+
         return EncoderOutput(loss=loss)
 
     def gradient_checkpointing_enable(self, **kwargs):
@@ -312,7 +307,7 @@ class BGEM3Model(nn.Module):
         if t is None:
             return None
         t = t.contiguous()
-    
+
         all_tensors = [torch.empty_like(t) for _ in range(self.world_size)]
         dist.all_gather(all_tensors, t)
 

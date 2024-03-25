@@ -34,7 +34,7 @@ class BiEncoderTrainer(Trainer):
         if self.is_world_process_zero():
             save_ckpt_for_sentence_transformers(output_dir,
                                                 pooling_mode=self.args.sentence_pooling_method,
-                                                normlized=self.args.normlized)
+                                                normlized=self.args.normalized)
 
 
     def compute_loss(self, model, inputs, return_outputs=False):
