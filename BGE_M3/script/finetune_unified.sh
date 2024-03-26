@@ -1,10 +1,10 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES="4,5,6,7"
+export CUDA_VISIBLE_DEVICES="6,7"
 export OMP_NUM_THREADS=8
-RUN_NAME="bgem3_unified_finetune"
+RUN_NAME="bgem3_dense_finetune"
 
-torchrun --nproc_per_node 4 \
+torchrun --nproc_per_node 2 \
     -m BGE_M3.src.main \
     --output_dir saved_models/$RUN_NAME \
     --model_name_or_path BAAI/bge-m3 \
@@ -19,16 +19,16 @@ torchrun --nproc_per_node 4 \
     --per_device_train_batch_size 1 \
     --dataloader_drop_last False \
     --normalized True \
-    --temperature 0.05 \
+    --temperature 0.04 \
     --query_max_len 128 \
     --passage_max_len 8192 \
     --train_group_size 2 \
     --negatives_cross_device \
-    --logging_steps 5 \
+    --logging_steps 15 \
     --save_strategy epoch \
     --same_task_within_batch True \
-    --unified_finetuning True \
-    --use_self_distill True \
+    --unified_finetuning False \
+    --use_self_distill False \
     --report_to tensorboard \
     --logging_dir "saved_models/$RUN_NAME/log_tensorboard" \
     "$@"

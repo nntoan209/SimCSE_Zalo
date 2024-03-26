@@ -118,12 +118,12 @@ if __name__ == "__main__":
     or args.model_savedir.split("/")[-1].startswith("checkpoint"): # the original model or a specific checkpoint
         models_list = [args.model_savedir]
     else: # list of checkpoints
-        models_list = [os.path.join(args.model_save_dir, path) for path in os.listdir(args.model_savedir) if path.startswith("checkpoint")]
+        models_list = [os.path.join(args.model_savedir, path) for path in os.listdir(args.model_savedir) if path.startswith("checkpoint")]
     for model_path in models_list:
         model = BGEM3FlagModel(model_path,  
                             pooling_method='cls',
-                            use_fp16=True,
-                            device='cuda') # Setting use_fp16 to True speeds up computation with a slight performance degradation
+                            use_fp16=True, # Setting use_fp16 to True speeds up computation with a slight performance degradation
+                            device=None) # Use device=None to use the default device (cuda if available, else cpu)
         
         print(f"Eval {model_path}")
 
@@ -174,9 +174,13 @@ if __name__ == "__main__":
                                     map_at_k=map_at_k) 
 
         with open(args.save_dir, "a") as f:
-            f.write(f"{model_path} {args.colbert_reank * 'Colbert rerank \n\tBefore rerank:'}\n")
+            if args.colbert_rerank:
+                f.write(f"{model_path} Colbert rerank \n\tBefore rerank:\n")
+            else:
+                f.write(f"{model_path}\n")
             for key, value in metrics.items():
-                f.write(f"{'\t' * (1 + args.colbert_rerank)}{key}: {value}\n")
+                indent = '\t' * (1 + args.colbert_rerank)
+                f.write(f"{indent}{key}: {value}\n")
 
         # rerank with Colbert
         if args.colbert_rerank:
