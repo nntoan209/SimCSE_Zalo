@@ -64,7 +64,11 @@ class BGEM3FlagModel:
             new_lexical_weights = new_lexical_weights[0]
         return new_lexical_weights
 
-    def compute_lexical_matching_score(self, lexical_weights_1: Dict, lexical_weights_2: Dict):
+    def dense_score(self, q_reps: np.ndarray, p_reps: np.ndarray):
+        similarity = q_reps @ p_reps.T # (N_queries x N_passages)
+        return similarity
+
+    def lexical_matching_score(self, lexical_weights_1: Dict, lexical_weights_2: Dict):
         scores = 0
         for token, weight in lexical_weights_1.items():
             if token in lexical_weights_2:

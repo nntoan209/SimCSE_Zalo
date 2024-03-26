@@ -2,6 +2,7 @@ from BGE_M3.src.utils import BGEM3FlagModel
 import numpy as np
 import os
 import json
+from typing import List
 import torch
 from tqdm import tqdm
 from sentence_transformers import util
@@ -16,6 +17,8 @@ parser.add_argument("--passage_batch_size", type=int, default=2, help='passage b
 parser.add_argument("--corpus_file", type=str, help="path to the corpus file")
 parser.add_argument("--dev_queries_file", type=str, help="path to the dev queries file")
 parser.add_argument("--dev_rel_docs_file", type=str, help="path to the dev relevant documents file")
+parser.add_argument("--sparse_hybrid", action='store_true', help="use sparse mode for hybrid retrieval")
+parser.add_argument("--sparse_weight", type=float, default=0.1, help="sparse weight for hybrid retrieval")
 parser.add_argument("--colbert_rerank", action='store_true', help="rerank with colbert")
 parser.add_argument("--save_dir", type=str)
 
@@ -26,6 +29,15 @@ if __name__ == "__main__":
     corpus = json.load(open(args.corpus_file, encoding='utf-8'))
     dev_queries = json.load(open(args.dev_queries_file, encoding='utf-8'))
     dev_rel_docs = json.load(open(args.dev_rel_docs_file, encoding='utf-8'))
+
+    def convert_score_to_rank(scores: List):
+        sorted_indices = np.argsort(-scores)
+        ranked_indices = np.argsort(sorted_indices) + 1
+        return ranked_indices
+    
+    def rrf_score(dense_ranks, sparse_ranks, sparse_weight, k):
+        return 1 / (dense_ranks + k) \
+             + 1 / (sparse_ranks + k) * sparse_weight
 
     def calculate_metrics(only_pidqids_results, dev_rel_docs, dev_queries,  mrr_at_k, accuracy_at_k, precision_recall_at_k, map_at_k):
         # Init score computation values
@@ -131,33 +143,68 @@ if __name__ == "__main__":
         sentences_embedding = model.encode(sentences=list(corpus.values()),
                                         batch_size=args.passage_batch_size,
                                         max_length=args.passage_max_length,
+                                        return_sparse=args.sparse_hybrid,
                                         return_colbert_vecs=args.colbert_rerank)
-        sentences_embedding_dense = torch.from_numpy(sentences_embedding['dense_vecs']).to(torch.float32)
 
         print("Dev Queries Embedding ...")
         queries_dev_embedding = model.encode(sentences=list(dev_queries.values()),
                                             batch_size=args.query_batch_size,
                                             max_length=args.query_max_length,
+                                            return_sparse=args.sparse_hybrid,
                                             return_colbert_vecs=args.colbert_rerank)
-        queries_dev_embedding_dense = torch.from_numpy(queries_dev_embedding['dense_vecs']).to(torch.float32)
 
-        print("Semantic Search ...")
-        results_semantic_search = util.semantic_search(queries_dev_embedding_dense, sentences_embedding_dense, top_k=100) #chunk
-
-        ### Convert results
+        only_pidqids_results = {}
         qids = list(dev_queries.keys())
         pids = list(corpus.keys())
 
-        converted_results = {}
-        for idx, result in enumerate(results_semantic_search):
-                for answer in result:
-                    answer['corpus_id'] = pids[answer['corpus_id']]
-                converted_results[qids[idx]] = result
+        if not args.sparse_hybrid: # only dense retrieval
+            print("Dense Search ...")
+            sentences_embedding_dense = torch.from_numpy(sentences_embedding['dense_vecs']).to(torch.float32)
+            queries_dev_embedding_dense = torch.from_numpy(queries_dev_embedding['dense_vecs']).to(torch.float32)
 
-        ### Get passage from chunk results 
-        only_pidqids_results = {}
-        for qid, result in converted_results.items():
-            only_pidqids_results[qid] = [" ".join(answer['corpus_id'].split()).strip() for answer in result]
+            results_dense_search = util.semantic_search(queries_dev_embedding_dense, sentences_embedding_dense, top_k=100) #chunk
+
+            converted_results = {}
+            for idx, result in enumerate(results_dense_search):
+                    for answer in result:
+                        answer['corpus_id'] = pids[answer['corpus_id']]
+                    converted_results[qids[idx]] = result
+
+            ### Get passage from chunk results 
+            only_pidqids_results = {}
+            for qid, result in converted_results.items():
+                only_pidqids_results[qid] = [answer['corpus_id'].strip() for answer in result]
+
+        else: # hybrid retrieval with dense and sparse
+            print("Hybrid Search ...")
+
+            # compute dense ranking
+            sentences_embedding_dense = sentences_embedding['dense_vecs'].astype(np.float32)
+            queries_dev_embedding_dense = queries_dev_embedding['dense_vecs'].astype(np.float32)
+
+            dense_scores = model.dense_score(q_reps=queries_dev_embedding_dense, p_reps=sentences_embedding_dense)
+
+            dense_ranks = np.apply_along_axis(convert_score_to_rank, 1, dense_scores)
+
+            # compute sparse ranking
+            sentences_embedding_sparse = sentences_embedding['lexical_weights'] # list of lexical weights
+            queries_dev_embedding_sparse = queries_dev_embedding['lexical_weights'] # list of lexical weights
+
+            sparse_scores = np.zeros((len(queries_dev_embedding_sparse), len(sentences_embedding_sparse)))
+
+            for i in range(len(queries_dev_embedding_sparse)):
+                for j in range(len(sentences_embedding_sparse)):
+                    sparse_scores[i][j] = model.lexical_matching_score(queries_dev_embedding_sparse[i], sentences_embedding_sparse[j])
+
+            sparse_ranks = np.apply_along_axis(convert_score_to_rank, 1, sparse_scores)
+
+            # compute rrf score
+            rrf_scores = rrf_score(dense_ranks, sparse_ranks, args.sparse_weight, k=10)
+
+            for idx, qid in enumerate(qids):
+                rrf_scores_for_qid = rrf_scores[idx]
+                top_k = np.argsort(-rrf_scores_for_qid)[:100]
+                only_pidqids_results[qid] = [pids[i] for i in top_k]
 
         ### Compute metrics  parameters
         mrr_at_k = [5, 10, 100]
@@ -222,3 +269,5 @@ if __name__ == "__main__":
                 f.write(f"\tAfter rerank:\n")
                 for key, value in rerank_metrics.items():
                     f.write(f"\t\t{key}: {value}\n")
+    with open(args.save_dir, "a") as f:
+        f.write(f"---------------------------------------------------------------------------------------------\n\n")
