@@ -2,7 +2,7 @@
 *.csv
 *.key
 legal_corpus.json
-*.ipynb
+test.ipynb
 msmarco_vietnamese/
 squadv2/
 data/
