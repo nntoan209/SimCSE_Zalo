@@ -140,7 +140,8 @@ def main():
     # Training
     # print(f"===========================Rank {dist.get_rank()}: start training===========================")
     trainer.train()
-    trainer.save_model()
+    if training_args.save_strategy == 'no':
+        trainer.save_model()
     # For convenience, we also re-save the tokenizer to the same directory,
     # so that you can share your model easily on huggingface.co/models =)
     if trainer.is_world_process_zero():
